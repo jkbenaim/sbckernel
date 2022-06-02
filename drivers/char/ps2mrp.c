@@ -13,6 +13,7 @@
 static struct mrp_unit mrp_units[4];
 static unsigned int mrp_major;
 static struct file_operations mrp_fops;
+static int mrp_debug = 0;
 
 int mrp_get_info(char *buf, char **start, off_t offset, int len, int unused);
 static struct proc_dir_entry mrp_proc_de = {
@@ -28,6 +29,18 @@ void mrp_interrupt(int arg1, void *arg2, struct pt_regs *pt_regs)
 	/* TODO */
 }
 
+void mrp_dump_regs(struct mrpregs *regs)
+{
+	if (mrp_debug <= 2) return;
+	printk("* BID=%04hx RST=%04hx CPS=%04hx CPR=%04hx\n",
+		regs->bid, regs->rst, regs->cps, regs->cpr);
+	printk("* FST=%04hx TXC=%04hx RXC=%04hx F1C=%04hx\n",
+		regs->fst, regs->txc, regs->rxc, regs->f1c);
+	printk("* IST=%04hx ISP=%04hx IER=%04hx CSI=%04hx\n",
+		regs->ist, regs->isp, regs->ier, regs->csi);
+	printk("* FSI=%04hx AEO=%04hx AFO=%04hx\n",
+		regs->fsi, regs->aeo, regs->afo);
+}
 
 int mrp_get_info(char *buf, char **start, off_t offset, int len, int unused)
 {
@@ -79,7 +92,6 @@ int mrp_get_info(char *buf, char **start, off_t offset, int len, int unused)
 			);
 		}
 	}
-	mylen += sprintf(buf+mylen, " bye\n");
 	return mylen;
 }
 
