@@ -209,6 +209,16 @@ LX_OBJS += h8.o
 M = y
 endif
 
+ifeq ($(CONFIG_PS2_MRP),y)
+M = y
+L_OBJS += ps2mrp.o
+else
+  ifeq ($(CONFIG_PS2_MRP),m)
+  M_OBJS += ps2mrp.o
+  MM = m
+  endif
+endif
+
 ifdef M
 LX_OBJS += misc.o
 else
