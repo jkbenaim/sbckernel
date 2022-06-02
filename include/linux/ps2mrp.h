@@ -87,4 +87,23 @@ struct mrp_unit {
 	void *wake_queue;
 	void *wake_queue_2;
 };
+
+#define DECI_MAGIC	(0xa14c)
+struct decihdr {
+	unsigned short magic;
+	unsigned short size;
+	unsigned int category;
+	unsigned short priority;
+	unsigned short rep;
+	unsigned char tag;
+	unsigned char acktag;
+	unsigned char ackcode;
+	unsigned char pad;
+	unsigned int crsv;
+	unsigned short cid;
+	unsigned short seq;
+	unsigned int req;
+	unsigned int cksum;
+} __attribute__((packed));
+
 #endif

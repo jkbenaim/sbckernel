@@ -13,7 +13,7 @@
 static struct mrp_unit mrp_units[4];
 static unsigned int mrp_major;
 static struct file_operations mrp_fops;
-static int mrp_debug = 0;
+static int mrp_debug = 3;
 
 int mrp_get_info(char *buf, char **start, off_t offset, int len, int unused);
 static struct proc_dir_entry mrp_proc_de = {
@@ -40,6 +40,52 @@ void mrp_dump_regs(struct mrpregs *regs)
 		regs->ist, regs->isp, regs->ier, regs->csi);
 	printk("* FSI=%04hx AEO=%04hx AFO=%04hx\n",
 		regs->fsi, regs->aeo, regs->afo);
+}
+
+int mrp_send(struct mrp_unit *mrp)
+{
+	int nw = ((mrp->slen + 3) >> 2);
+	int *src = mrp->buf1c;
+	volatile int *fifo = &mrp->base2->fifoport;
+	int i;
+	if (mrp_debug > 1) {
+		printk("mrp_send: slen=%d\n", mrp->slen);
+	}
+	if (mrp_debug > 2) {
+		printk("mrp_put_fifo: nw=%d\n", nw);
+	}
+	for (i = 0; i < mrp->slen; i++) {
+		*fifo = *src++;
+	}
+	mrp->mrpregs->txc = 1;
+	mrp->mrpregs->ier |= 0x20;
+	mrp->flags |= MRPF_SBUSY;
+	return nw;
+}
+
+int mrp_recv(struct mrp_unit *mrp)
+{
+	struct decihdr *decihdr = (struct decihdr *)mrp->recvbuf;
+	volatile int *fifo = &mrp->base2->fifoport;
+	if (mrp_debug > 1)
+		printk("mrp_recv:\n");
+	if (mrp->flags & MRPF_RDONE)
+		return 0;
+	if ((mrp->mrpregs->fst & 1) == 0) {
+		while (1) {
+			mrp->buf20 = mrp->recvbuf;
+			if (mrp_debug > 2)
+				printk("mrp_get_fifo: nw=%d\n", 1);
+			*(int *)mrp->recvbuf = *fifo;
+			if ((mrp->mrpregs->fst & 0x10) != 0) {
+				if (mrp_debug > 0)
+					printk("mrp_recv: invalid fifo status (%04hx)\n", mrp->mrpregs->fst);
+				mrp->mrpregs->rxc = 1;
+			}
+			mrp->rlen = decihdr->size;
+			/* TODO */
+		}
+	}
 }
 
 int mrp_get_info(char *buf, char **start, off_t offset, int len, int unused)
