@@ -198,6 +198,7 @@ struct pci_dev_info dev_info[] = {
 	DEVICE( TI,		TI_PCI1130,	"PCI1130"),
 	DEVICE( TI,		TI_PCI1131,	"PCI1131"),
 	DEVICE( TI,		TI_PCI1250,	"PCI1250"),
+	DEVICE( SONY,		SONY_PS2_MRP,	"PS2 TOOL MRP"),
 	DEVICE( OAK,		OAK_OTI107,	"OTI107"),
 	DEVICE( WINBOND2,	WINBOND2_89C940,"NE2000-PCI"),
 	DEVICE( MOTOROLA,	MOTOROLA_MPC105,"MPC105 Eagle"),
@@ -761,6 +762,7 @@ const char *pci_strvendor(unsigned int vendor)
 	      case PCI_VENDOR_ID_SGS:		return "SGS Thomson";
 	      case PCI_VENDOR_ID_BUSLOGIC:	return "BusLogic";
 	      case PCI_VENDOR_ID_TI:		return "Texas Instruments";
+	      case PCI_VENDOR_ID_SONY:		return "Sony Corporation";
 	      case PCI_VENDOR_ID_OAK: 		return "OAK";
 	      case PCI_VENDOR_ID_WINBOND2:	return "Winbond";
 	      case PCI_VENDOR_ID_MOTOROLA:	return "Motorola";
