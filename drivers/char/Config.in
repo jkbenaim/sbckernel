@@ -79,4 +79,5 @@ if [ "$CONFIG_WATCHDOG" != "n" ]; then
   tristate '   Berkshire Products PC Watchdog' CONFIG_PCWATCHDOG
 fi
 bool 'Enhanced Real Time Clock Support' CONFIG_RTC
+tristate 'PS2 MRP support' CONFIG_PS2_MRP
 endmenu
