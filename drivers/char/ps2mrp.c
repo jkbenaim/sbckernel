@@ -9,7 +9,6 @@
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/stat.h>
-#include <linux/powctrl_ioctl.h>
 
 static struct mrp_unit mrp_units[4];
 static unsigned int mrp_major;
@@ -25,55 +24,7 @@ static struct proc_dir_entry mrp_proc_de = {
 	.get_info = mrp_get_info,
 };
 
-static unsigned int powctrl_major;
-static int powctrl_debug = 3;
-static int powctrl_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg);
-static int powctrl_open(struct inode *inode, struct file *file);
-static void powctrl_release(struct inode *inode, struct file *file);
-static struct file_operations powctrl_fops = {
-	/* seek */	NULL,
-	/* read */	NULL,
-	/* write */	NULL,
-	/* readdir */	NULL,
-	/* select */	NULL,
-	/* ioctl */	powctrl_ioctl,
-	/* mmap */	NULL,
-	/* open */	powctrl_open,
-	/* release */	powctrl_release,
-	/* fsync */	NULL,
-	/* fasync */	NULL,
-	/* check_media_change */	NULL,
-	/* revalidate */	NULL,
-};
-
-/* Compatibility Linux-2.0.X <-> Linux-2.1.X */
-/* Shamelessly stolen from include/linux/isdnif.h */
-
-#ifndef LINUX_VERSION_CODE
-#include <linux/version.h>
-#endif
-#if (LINUX_VERSION_CODE < 0x020100)
-#include <linux/mm.h>
-
-static inline unsigned long copy_from_user(void *to, const void *from, unsigned long n)
-{
-        int i;
-        if ((i = verify_area(VERIFY_READ, from, n)) != 0)
-                return i;
-        memcpy_fromfs(to, from, n);
-        return 0;
-}
-
-static inline unsigned long copy_to_user(void *to, const void *from, unsigned long n)
-{
-        int i;
-        if ((i = verify_area(VERIFY_WRITE, to, n)) != 0)
-                return i;
-        memcpy_tofs(to, from, n);
-        return 0;
-}
-#endif
-
+/*
 static void powctrl_poweroff_request(void)
 {
 	unsigned temp;
@@ -82,85 +33,7 @@ static void powctrl_poweroff_request(void)
 	temp &= 0x3f;
 	mrp_units[0].mrpregs->f1c = temp;
 }
-
-static int powctrl_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
-{
-	int size = _IOC_SIZE(cmd);
-	int r = 0;
-	int rc;
-	POWCTRL_RWDATA rwdata;
-	int value = 0;
-	int rslt = 0;
-
-	if (_IOC_TYPE(cmd) != POWCTRL_IOC_MAGIC)
-		return -EINVAL;
-	if (_IOC_NR(cmd) > POWCTRL_IOC_MAXNR)
-		return -EINVAL;
-
-	if (_IOC_DIR(cmd) & _IOC_READ)
-		r |= verify_area(VERIFY_WRITE, (void *)arg, size);
-	if (_IOC_DIR(cmd) & _IOC_WRITE)
-		r |= verify_area(VERIFY_READ, (void *)arg, size);
-	if (r) return r;
-
-
-	switch (cmd) {
-	case POWCTRL_IOCREGREAD:
-		printk("powctrl ioctl: regread\n");
-		break;
-	case POWCTRL_IOCREGWRITE:
-		printk("powctrl ioctl: regwrite\n");
-		break;
-	case POWCTRL_IOCPOWEROFF:
-		if (powctrl_debug >= POWCTRL_DBG_MIDIUM)
-			printk("powctrl: Enter Poweroff mode\n");
-		powctrl_poweroff_request();
-		return 0;
-		break;
-	case POWCTRL_IOCPOWSTAT:
-		rc = mrp_units[0].mrpregs->f1c;
-		printk("powctrl ioctl: powstat, returning %xh\n", rc);
-		return rc;
-		break;
-	case POWCTRL_IOCTIMER:
-		printk("powctrl ioctl: timer\n");
-		break;
-	case POWCTRL_IOC_TLED_COLOR:
-	{
-		unsigned f1c;
-		copy_from_user((void *)&rwdata, (void *)arg, size);
-		printk("powctrl ioctl: tled_color %x\n", rwdata.value);
-		f1c = mrp_units[0].mrpregs->f1c;
-		f1c &= ~3;
-		f1c |= (rwdata.value & 3);
-		mrp_units[0].mrpregs->f1c = f1c;
-	}
-		break;
-	case POWCTRL_IOC_TLED_BLINK:
-		printk("powctrl ioctl: tled_color\n");
-		break;
-	case POWCTRL_IOCPOWDBG:
-		printk("powctrl ioctl: powdbg\n");
-		break;
-	default:
-		printk("powctrl ioctl: %xh\n", cmd);
-		break;
-	}
-	return 0;
-}
-
-static int powctrl_open(struct inode *inode, struct file *file)
-{
-	printk("powctrl: opened\n");
-	MOD_INC_USE_COUNT;
-	return 0;
-}
-
-static void powctrl_release(struct inode *inode, struct file *file)
-{
-	printk("powctrl: released\n");
-	MOD_DEC_USE_COUNT;
-}
+*/
 
 void mrp_interrupt(int arg1, void *arg2, struct pt_regs *pt_regs)
 {
@@ -370,14 +243,6 @@ int mrp_init(void)
 	mrp_major = iRc;
 	printk("mrp: registered character major %d\n", iRc);
 
-	iRc = register_chrdev(0, "powctrl", &powctrl_fops);
-	if (iRc <= 0) {
-		printk("powctrl: unable to get dynamic major %d\n", iRc);
-		return 0;
-	}
-	powctrl_major = iRc;
-	printk("powctrl: registered character major %d\n", iRc);
-
 	proc_register_dynamic(&proc_root, &mrp_proc_de);
 	for (index = 0; index < 4; index++) {
 		void *rc;
@@ -451,8 +316,5 @@ void cleanup_module(void)
 	unregister_chrdev(mrp_major, "mrp");
 	printk("mrp: unregistered character major %d\n", mrp_major);
 	proc_unregister(&proc_root, mrp_proc_de.low_ino);
-
-	unregister_chrdev(powctrl_major, "powctrl");
-	printk("powctrl: unregistered character major %d\n", powctrl_major);
 }
 #endif

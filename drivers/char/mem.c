@@ -23,6 +23,10 @@
 #include <asm/io.h>
 #include <asm/pgtable.h>
 
+#ifdef CONFIG_PS2_SBC_POWCTRL
+#include <linux/ps2powctrl.h>
+#endif
+
 #ifdef CONFIG_SOUND
 void soundcard_init(void);
 #endif
@@ -415,6 +419,9 @@ int chr_dev_init(void)
 #endif
 #ifdef CONFIG_FTAPE
 	ftape_init();
+#endif
+#ifdef CONFIG_PS2_SBC_POWCTRL
+	powctrl_init();
 #endif
 	return 0;
 }

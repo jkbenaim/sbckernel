@@ -8,7 +8,8 @@
  *        Author: sinh@sm.sony.co.jp
  *
  */
-
+#ifndef _LINUX_PS2POWCTRL_H
+#define _LINUX_PS2POWCTRL_H
 typedef struct 
 {
     unsigned short value;
@@ -35,8 +36,8 @@ typedef struct
 #define	POWCTRL_IOCTIMER	_IOW(POWCTRL_IOC_MAGIC, 5, POWCTRL_RWDATA)
 #define	POWCTRL_IOC_TLED_COLOR	_IOW(POWCTRL_IOC_MAGIC, 6, POWCTRL_RWDATA)
 #define	POWCTRL_IOC_TLED_BLINK	_IOW(POWCTRL_IOC_MAGIC, 7, POWCTRL_RWDATA)
-#define	POWCTRL_IOC_WLED_COLOR	_IOW(POWCTRL_IOC_MAGIC, 6, POWCTRL_RWDATA)
-#define	POWCTRL_IOC_WLED_BLINK	_IOW(POWCTRL_IOC_MAGIC, 7, POWCTRL_RWDATA)
+//#define	POWCTRL_IOC_WLED_COLOR	_IOW(POWCTRL_IOC_MAGIC, 6, POWCTRL_RWDATA)
+//#define	POWCTRL_IOC_WLED_BLINK	_IOW(POWCTRL_IOC_MAGIC, 7, POWCTRL_RWDATA)
 #define	POWCTRL_IOCPOWDBG	_IOW(POWCTRL_IOC_MAGIC, 8, int)
 
 #define POWCTRL_IOC_MAXNR 8
@@ -67,6 +68,7 @@ typedef struct
 
 
 // for POWCTRL_IOC_WLED_COLOR (Workstation Mode for EE)
+#if 0
 #define	POWCTRL_WLED_GREEN	(1)
 #define	POWCTRL_WLED_OFF	(0)
 #define	POWCTRL_WLED_BLINK	(4)
@@ -76,10 +78,13 @@ typedef struct
 #define	POWCTRL_WLED_BLINK_HIGH	(8)
 #define	POWCTRL_WLED_BLINK_LOW	(4)
 #define	POWCTRL_WLED_BLINK_OFF	(0)
-
+#endif
 
 // for POWCTRL_IOCPOWDBG
 #define	POWCTRL_DBG_NONE	(0)
 #define	POWCTRL_DBG_NORMAL	(1)
 #define	POWCTRL_DBG_MIDIUM	(3)
 #define	POWCTRL_DBG_ALL		(5)
+
+int powctrl_init(void);
+#endif
