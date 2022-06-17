@@ -209,6 +209,11 @@ LX_OBJS += h8.o
 M = y
 endif
 
+ifdef CONFIG_PS2_SBC_POWCTRL
+L_OBJS += ps2powctrl.o
+M = y
+endif
+
 ifeq ($(CONFIG_PS2_MRP),y)
 M = y
 L_OBJS += ps2mrp.o
