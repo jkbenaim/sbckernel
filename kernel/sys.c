@@ -25,6 +25,10 @@
 #include <linux/apm_bios.h>
 #endif
 
+#ifdef CONFIG_PS2_SBC_POWCTRL
+#include <linux/ps2powctrl.h>
+#endif
+
 #include <asm/segment.h>
 #include <asm/io.h>
 
@@ -200,10 +204,18 @@ asmlinkage int sys_reboot(int magic, int magic_too, int flag)
 #ifdef CONFIG_SCSI_GDTH
 		gdth_halt();
 #endif
+#ifdef CONFIG_PS2_SBC_POWCTRL
+		powctrl_reset_pif();
+		powctrl_poweroff_request();
+#endif
 		printk(KERN_EMERG "System halted\n");
 		sys_kill(-1, SIGKILL);
 #if defined(CONFIG_APM) && defined(CONFIG_APM_POWER_OFF)
 		apm_power_off();
+#endif
+#ifdef CONFIG_PS2_SBC_POWCTRL
+		printk(KERN_EMERG "Wait for auto-poweroff ...");
+		powctrl_system_poweroff();
 #endif
 		do_exit(0);
 	} else
@@ -530,7 +542,7 @@ asmlinkage int sys_setfsuid(uid_t uid)
 }
 
 /*
- * Samma på svenska..
+ * Samma pÃ¥ svenska..
  */
 asmlinkage int sys_setfsgid(gid_t gid)
 {

@@ -24,17 +24,6 @@ static struct proc_dir_entry mrp_proc_de = {
 	.get_info = mrp_get_info,
 };
 
-/*
-static void powctrl_poweroff_request(void)
-{
-	unsigned temp;
-	temp = mrp_units[0].mrpregs->f1c;
-	temp |= 4;
-	temp &= 0x3f;
-	mrp_units[0].mrpregs->f1c = temp;
-}
-*/
-
 void mrp_interrupt(int arg1, void *arg2, struct pt_regs *pt_regs)
 {
 	/* TODO */

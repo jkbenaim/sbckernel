@@ -2,46 +2,46 @@
 #define _LINUX_PS2_MRP_H
 
 struct base2 {
-	int fifoport;
+	volatile int fifoport;
 };
 
 struct mrpregs {
-	short bid;
-	short _pad02;
-	short rst;
-	short _pad06;
-	short cps;
-	short _pad0a;
-	short cpr;
-	short _pad0e;
-	short fst;
-	short _pad12;
-	short txc;
-	short _pad16;
-	short rxc;
-	short _pad1a;
-	short f1c;
-	short _pad1e;
-	short ist;
-	short _pad22;
-	short isp;
-	short _pad26;
-	short ier;
-	short _pad2a;
-	short csi;
-	short _pad2e;
-	short fsi;
-	short _pad32;
-	short aeo;
-	short _pad36;
-	short afo;
-	short _pad3a;
+	volatile short bid;
+	volatile short _pad02;
+	volatile short rst;
+	volatile short _pad06;
+	volatile short cps;
+	volatile short _pad0a;
+	volatile short cpr;
+	volatile short _pad0e;
+	volatile short fst;
+	volatile short _pad12;
+	volatile short txc;
+	volatile short _pad16;
+	volatile short rxc;
+	volatile short _pad1a;
+	volatile short f1c;
+	volatile short _pad1e;
+	volatile short ist;
+	volatile short _pad22;
+	volatile short isp;
+	volatile short _pad26;
+	volatile short ier;
+	volatile short _pad2a;
+	volatile short csi;
+	volatile short _pad2e;
+	volatile short fsi;
+	volatile short _pad32;
+	volatile short aeo;
+	volatile short _pad36;
+	volatile short afo;
+	volatile short _pad3a;
 };
 
 struct base0 {
 	char _pad0[0x4c];
-	int idk4c;
-	int idk50;
+	volatile int idk4c;
+	volatile int idk50;
 };
 
 enum mrp_flags {
@@ -59,9 +59,9 @@ enum mrp_flags {
 struct mrp_unit {
 	int flags;
 	int irq;
-	struct base0 *base0;
-	struct base2 *base2;
-	struct mrpregs *mrpregs;
+	volatile struct base0 *base0;
+	volatile struct base2 *base2;
+	volatile struct mrpregs *mrpregs;
 	void *sendbuf;
 	void *recvbuf;
 	int *buf1c;

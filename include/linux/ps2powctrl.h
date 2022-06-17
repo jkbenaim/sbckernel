@@ -87,4 +87,7 @@ typedef struct
 #define	POWCTRL_DBG_ALL		(5)
 
 int powctrl_init(void);
+void powctrl_reset_pif(void);
+void powctrl_poweroff_request(void);
+void powctrl_system_poweroff(void);
 #endif

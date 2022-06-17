@@ -64,10 +64,14 @@ int powctrl_init(void);
 #define LED_BLINK_WAIT_LOW	(3)
 #define LED_BLINK_OFF		(0)
 
-#define	MRP_TLED		(1 << 0)
 #define	MRP_POWEROFF_REQ	(1 << 10)
 #define	MRP_POWEROFF_ACK	(1 << 3)
 #define	MRP_SHUTDOWN_REQ	(1 << 2)
+#define MRP_TLED_MASK		(3)
+#define MRP_TLED_ORANGE		(0)
+#define MRP_TLED_GREEN		(1)
+#define MRP_TLED_RED		(2)
+#define MRP_TLED_OFF		(3)
 
 #define	MRP_POWCTRL_POWEROFF_DISABLE	1
 #define	MRP_POWCTRL_POWEROFF_ENABLE	0
@@ -128,24 +132,27 @@ static void powctrl_set_color(unsigned short color)
 {
 	unsigned short temp;
 	temp = powctrl_get_f1c();
-	temp &= ~3;
-	temp |= color & 3;
+	temp &= ~MRP_TLED_MASK;
+	temp |= color & MRP_TLED_MASK;
 	powctrl_set_f1c(temp);
 }
 
 static void powctrl_turn_tled(void)
 {
 	unsigned short color;
-	color = powctrl_get_f1c() & 3;
+	color = powctrl_get_f1c() & MRP_TLED_MASK;
 	if (color != powctrl_color)
 		powctrl_set_color(powctrl_color);
 	else
-		powctrl_set_color(3);
+		powctrl_set_color(MRP_TLED_OFF);
 }
 
 static void powctrl_poweroff_ack(int acknak)
 {
 	unsigned short temp;
+
+	if (mrp_unit.mrpregs->bid != 0x4126)
+		powctrl_reset_pif();
 
 	temp = powctrl_get_f1c();
 
@@ -162,7 +169,6 @@ void powctrl_poweroff_request(void)
 	int i, k;
 	unsigned short temp;
 
-	//powctrl= readhw(MRP_ADD_POWCTRL);
 	temp = powctrl_get_f1c();
 	temp |= MRP_SHUTDOWN_REQ;
 	powctrl_set_f1c(temp);   
@@ -175,10 +181,36 @@ void powctrl_poweroff_request(void)
 	temp = powctrl_get_f1c();
 }
 
-
 void powctrl_system_poweroff(void)
 {
 	powctrl_poweroff_ack(MRP_POWCTRL_POWEROFF_ENABLE);
+}
+
+void powctrl_reset_pif(void)
+{
+	int temp;
+	temp = mrp_unit.mrpregs->bid;
+	if (temp != 0x4126) {
+		printk("powctrl WARNING!!! bid is not 4126h, but %xh !!!!\n", temp);
+		mrp_unit.mrpregs->rst = 0x8000;
+		udelay(10);
+		mrp_unit.mrpregs->fst = 0xc0c0;
+		udelay(10);
+		mrp_unit.mrpregs->fst = 0;
+		mrp_unit.mrpregs->rst = 0;
+		udelay(10);
+	}
+	temp = mrp_unit.base0->idk50;
+	temp &= ~0x20;
+	temp |= 0x40000000;
+	mrp_unit.base0->idk50 = temp;
+	udelay(10);
+	temp &= ~0x40000000;
+	mrp_unit.base0->idk50 = temp;
+	temp = mrp_unit.base0->idk4c;
+	temp |= 0x40;
+	mrp_unit.base0->idk4c = temp;
+	mrp_unit.mrpregs->ier = 0;
 }
 
 static void powctrl_observe_status(unsigned long p)
@@ -186,6 +218,7 @@ static void powctrl_observe_status(unsigned long p)
 	unsigned short temp;
 
 	if (powctrl_timer_enable) {
+		powctrl_reset_pif();
 		if (powctrl_blink) {
 			if (powctrl_blkcnt >= powctrl_blink) {
 				powctrl_turn_tled();
@@ -236,6 +269,9 @@ static int powctrl_ioctl( struct inode *inode, struct file *file,
 	if (r)
 		return r;
 
+	if (powctrl_timer_enable)
+		powctrl_reset_pif();
+
 	switch (cmd) {
         case POWCTRL_IOCPOWEROFF:
 		if (powctrl_dbglevel >= POWCTRL_DBG_MIDIUM)
@@ -264,6 +300,7 @@ static int powctrl_ioctl( struct inode *inode, struct file *file,
 				POWCTRL_DEVICE_NAME,
 				rslt ? "enable" : "disable",
 				powctrl_timer_enable ? "enable" : "disable");
+		powctrl_reset_pif();
 		return rslt;
 
         case POWCTRL_IOC_TLED_COLOR:
@@ -271,7 +308,7 @@ static int powctrl_ioctl( struct inode *inode, struct file *file,
 		rslt = powctrl_color;
 		powctrl_blink = LED_BLINK_OFF;
 		powctrl_blkcnt = 0;
-		powctrl_color = rwdata.value & 3;
+		powctrl_color = rwdata.value & MRP_TLED_MASK;
 		powctrl_set_color(powctrl_color);
 		return rslt;
 
@@ -280,7 +317,7 @@ static int powctrl_ioctl( struct inode *inode, struct file *file,
 		rslt = powctrl_blink;
 		powctrl_blink = LED_BLINK_WAIT_HIGH;
 		powctrl_blkcnt = 0;
-		powctrl_color = rwdata.value & 3;
+		powctrl_color = rwdata.value & MRP_TLED_MASK;
 		powctrl_set_color(powctrl_color);
 		return rslt;
 
@@ -404,10 +441,14 @@ int powctrl_init(void)
 	powctrl_major = iRc;
 	printk("powctrl: registered character major %d\n", iRc);
 
-	powctrl_poweroff_ack(MRP_POWCTRL_POWEROFF_DISABLE);
+	printk("BEFORE RESET\n");
+	powctrl_reset_pif();
+	printk("AFTER RESET\n");
 
+	powctrl_poweroff_ack(MRP_POWCTRL_POWEROFF_DISABLE);
+	printk("AFTER NAK\n");
 	powctrl_blink = LED_BLINK_OFF;
-	powctrl_color = 0;	/* Orange */
+	powctrl_color = MRP_TLED_ORANGE;
 	powctrl_set_color(powctrl_color);
 
 	init_timer(&powctrl_timer);
