@@ -236,7 +236,6 @@ static int powctrl_ioctl( struct inode *inode, struct file *file,
 	if (r)
 		return r;
 
-	printk("%s: ioctl %x\n", POWCTRL_DEVICE_NAME, cmd);
 	switch (cmd) {
         case POWCTRL_IOCPOWEROFF:
 		if (powctrl_dbglevel >= POWCTRL_DBG_MIDIUM)
