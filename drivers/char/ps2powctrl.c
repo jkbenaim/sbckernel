@@ -407,7 +407,7 @@ int powctrl_init(void)
 
 	powctrl_poweroff_ack(MRP_POWCTRL_POWEROFF_DISABLE);
 
-	powctrl_blink = LED_BLINK_WAIT_HIGH;
+	powctrl_blink = LED_BLINK_OFF;
 	powctrl_color = 0;	/* Orange */
 	powctrl_set_color(powctrl_color);
 
