@@ -66,8 +66,8 @@ int powctrl_init(void);
 
 #define	MRP_TLED		(1 << 0)
 #define	MRP_POWEROFF_REQ	(1 << 10)
-#define	MRP_POWEROFF_ACK	(1 << 2)
-#define	MRP_SHUTDOWN_REQ	(1 << 1)
+#define	MRP_POWEROFF_ACK	(1 << 3)
+#define	MRP_SHUTDOWN_REQ	(1 << 2)
 
 #define	MRP_POWCTRL_POWEROFF_DISABLE	1
 #define	MRP_POWCTRL_POWEROFF_ENABLE	0
@@ -83,6 +83,7 @@ static struct timer_list powctrl_timer;
 static unsigned int powctrl_timer_enable = 0;
 static int powctrl_blink = 0;
 static int powctrl_blkcnt = 0;
+static int powctrl_color = 0;
 static struct mrp_unit mrp_unit;
 
 /* Compatibility Linux-2.0.X <-> Linux-2.1.X */
@@ -123,29 +124,24 @@ static void powctrl_set_f1c(unsigned short f1c)
 	mrp_unit.mrpregs->f1c = f1c;
 }
 
-static void powctrl_tled(int on_off)
+static void powctrl_set_color(unsigned short color)
 {
 	unsigned short temp;
 	temp = powctrl_get_f1c();
-
-	if (on_off)
-		temp &= ~MRP_TLED;
-	else
-		temp |= MRP_TLED;
-
+	temp &= ~3;
+	temp |= color & 3;
 	powctrl_set_f1c(temp);
 }
-
 
 static void powctrl_turn_tled(void)
 {
-	unsigned short temp;
-
-	temp = powctrl_get_f1c();
-	temp ^= MRP_TLED;
-	powctrl_set_f1c(temp);
+	unsigned short color;
+	color = powctrl_get_f1c() & 3;
+	if (color != powctrl_color)
+		powctrl_set_color(powctrl_color);
+	else
+		powctrl_set_color(3);
 }
-
 
 static void powctrl_poweroff_ack(int acknak)
 {
@@ -160,7 +156,6 @@ static void powctrl_poweroff_ack(int acknak)
 
 	powctrl_set_f1c(temp);
 }
-
 
 void powctrl_poweroff_request(void)
 {
@@ -185,7 +180,6 @@ void powctrl_system_poweroff(void)
 {
 	powctrl_poweroff_ack(MRP_POWCTRL_POWEROFF_ENABLE);
 }
-
 
 static void powctrl_observe_status(unsigned long p)
 {
@@ -215,9 +209,9 @@ static void powctrl_observe_status(unsigned long p)
 		}
 	}
 
-	powctrl_timer.function= powctrl_observe_status;
-	powctrl_timer.data= (unsigned long)NULL;
-	powctrl_timer.expires= jiffies + MRP_TIMER_UNIT;
+	powctrl_timer.function = powctrl_observe_status;
+	powctrl_timer.data = (unsigned long)NULL;
+	powctrl_timer.expires = jiffies + MRP_TIMER_UNIT;
 	add_timer(&powctrl_timer);
 }
 
@@ -242,7 +236,7 @@ static int powctrl_ioctl( struct inode *inode, struct file *file,
 	if (r)
 		return r;
 
-
+	printk("%s: ioctl %x\n", POWCTRL_DEVICE_NAME, cmd);
 	switch (cmd) {
         case POWCTRL_IOCPOWEROFF:
 		if (powctrl_dbglevel >= POWCTRL_DBG_MIDIUM)
@@ -275,26 +269,20 @@ static int powctrl_ioctl( struct inode *inode, struct file *file,
 
         case POWCTRL_IOC_TLED_COLOR:
 		copy_from_user((void *)&rwdata, (void *)arg, size);
+		rslt = powctrl_color;
 		powctrl_blink = LED_BLINK_OFF;
 		powctrl_blkcnt = 0;
-		if (rwdata.value & POWCTRL_TLED_GREEN) {
-			if (rwdata.value & POWCTRL_TLED_BLINK)
-				powctrl_blink = LED_BLINK_WAIT_LOW;
-			powctrl_tled(LED_ON);
-		}
-		else
-			powctrl_tled(LED_OFF);
+		powctrl_color = rwdata.value & 3;
+		powctrl_set_color(powctrl_color);
 		return rslt;
 
         case POWCTRL_IOC_TLED_BLINK:
 		copy_from_user((void *)&rwdata, (void *)arg, size);
 		rslt = powctrl_blink;
-		powctrl_blink = LED_BLINK_OFF;
+		powctrl_blink = LED_BLINK_WAIT_HIGH;
 		powctrl_blkcnt = 0;
-		if (rwdata.value & POWCTRL_TLED_BLINK)
-			powctrl_blink = LED_BLINK_WAIT_LOW;
-		powctrl_tled(LED_ON);
-
+		powctrl_color = rwdata.value & 3;
+		powctrl_set_color(powctrl_color);
 		return rslt;
 
         case POWCTRL_IOCPOWDBG:
@@ -420,11 +408,12 @@ int powctrl_init(void)
 	powctrl_poweroff_ack(MRP_POWCTRL_POWEROFF_DISABLE);
 
 	powctrl_blink = LED_BLINK_WAIT_HIGH;
-	powctrl_tled(LED_ON);
+	powctrl_color = 0;	/* Orange */
+	powctrl_set_color(powctrl_color);
 
 	init_timer(&powctrl_timer);
 	powctrl_timer_enable = 1;
-	powctrl_timer.function= powctrl_observe_status;
+	powctrl_timer.function = powctrl_observe_status;
 	powctrl_timer.data= (unsigned long)NULL;
 	powctrl_timer.expires= jiffies + MRP_TIMER_UNIT;
 	add_timer(&powctrl_timer);
