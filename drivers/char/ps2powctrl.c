@@ -144,7 +144,7 @@ static void powctrl_poweroff_ack(int acknak)
 	unsigned short temp;
 
 	if (mrp_unit.mrpregs->bid != 0x4126)
-		powctrl_reset_pif();
+		return;
 
 	temp = powctrl_get_f1c();
 
@@ -178,20 +178,20 @@ void powctrl_system_poweroff(void)
 	powctrl_poweroff_ack(MRP_POWCTRL_POWEROFF_ENABLE);
 }
 
+void powctrl_reset_mrp(void)
+{
+	mrp_unit.mrpregs->rst = 0x8000;
+	udelay(10);
+	mrp_unit.mrpregs->fst = 0xc0c0;
+	udelay(10);
+	mrp_unit.mrpregs->fst = 0;
+	mrp_unit.mrpregs->rst = 0;
+	udelay(10);
+}
+
 void powctrl_reset_pif(void)
 {
 	int temp;
-	temp = mrp_unit.mrpregs->bid;
-	if (temp != 0x4126) {
-		printk("%s: mrp seems dead (bad board id), resetting\n", POWCTRL_DEVICE_NAME);
-		mrp_unit.mrpregs->rst = 0x8000;
-		udelay(10);
-		mrp_unit.mrpregs->fst = 0xc0c0;
-		udelay(10);
-		mrp_unit.mrpregs->fst = 0;
-		mrp_unit.mrpregs->rst = 0;
-		udelay(10);
-	}
 	temp = mrp_unit.base0->idk50;
 	temp &= ~0x20;
 	temp |= 0x40000000;
@@ -202,7 +202,7 @@ void powctrl_reset_pif(void)
 	temp = mrp_unit.base0->idk4c;
 	temp |= 0x40;
 	mrp_unit.base0->idk4c = temp;
-	mrp_unit.mrpregs->ier = 0;
+	//mrp_unit.mrpregs->ier = 0;
 }
 
 static void powctrl_observe_status(unsigned long p)
@@ -433,6 +433,7 @@ int powctrl_init(void)
 	powctrl_major = iRc;
 	printk("%s: registered character major %d\n", POWCTRL_DEVICE_NAME, iRc);
 
+	powctrl_reset_mrp();
 	powctrl_reset_pif();
 
 	powctrl_poweroff_ack(MRP_POWCTRL_POWEROFF_DISABLE);
