@@ -183,7 +183,7 @@ void powctrl_reset_pif(void)
 	int temp;
 	temp = mrp_unit.mrpregs->bid;
 	if (temp != 0x4126) {
-		printk("powctrl WARNING!!! bid is not 4126h, but %xh !!!!\n", temp);
+		printk("%s: mrp seems dead (bad board id), resetting\n", POWCTRL_DEVICE_NAME);
 		mrp_unit.mrpregs->rst = 0x8000;
 		udelay(10);
 		mrp_unit.mrpregs->fst = 0xc0c0;
@@ -427,18 +427,15 @@ int powctrl_init(void)
 	
 	iRc = register_chrdev(0, POWCTRL_DEVICE_NAME, &powctrl_fops);
 	if (iRc <= 0) {
-		printk("powctrl: unable to get dynamic major %d\n", iRc);
+		printk("%s: unable to get dynamic major %d\n", POWCTRL_DEVICE_NAME, iRc);
 		return 0;
 	}
 	powctrl_major = iRc;
-	printk("powctrl: registered character major %d\n", iRc);
+	printk("%s: registered character major %d\n", POWCTRL_DEVICE_NAME, iRc);
 
-	printk("BEFORE RESET\n");
 	powctrl_reset_pif();
-	printk("AFTER RESET\n");
 
 	powctrl_poweroff_ack(MRP_POWCTRL_POWEROFF_DISABLE);
-	printk("AFTER NAK\n");
 	powctrl_blink = LED_BLINK_OFF;
 	powctrl_color = MRP_TLED_ORANGE;
 	powctrl_set_color(powctrl_color);
