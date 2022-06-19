@@ -44,14 +44,6 @@
 #include <asm/io.h>
 #include <asm/system.h>
 
-typedef unsigned char	byte;
-typedef unsigned short	half;
-typedef unsigned int	word;
-
-typedef volatile byte	vbyte;
-typedef volatile half	vhalf;
-typedef volatile word	vword;
-
 #include <linux/ps2mrp.h>
 #include <linux/ps2powctrl.h>
 
