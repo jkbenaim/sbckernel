@@ -195,6 +195,9 @@ asmlinkage int sys_reboot(int magic, int magic_too, int flag)
 #ifdef CONFIG_SCSI_GDTH
 		gdth_halt();
 #endif
+#ifdef CONFIG_PS2_SBC_POWCTRL
+		powctrl_system_poweroff();
+#endif
 		hard_reset_now();
 	} else if (flag == 0x89ABCDEF)
 		C_A_D = 1;
