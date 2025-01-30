@@ -24,11 +24,6 @@ static struct proc_dir_entry mrp_proc_de = {
 	.get_info = mrp_get_info,
 };
 
-void mrp_interrupt(int arg1, void *arg2, struct pt_regs *pt_regs)
-{
-	/* TODO */
-}
-
 void mrp_dump_regs(struct mrpregs *regs)
 {
 	if (mrp_debug <= 2) return;
@@ -86,6 +81,71 @@ int mrp_recv(struct mrp_unit *mrp)
 			/* TODO */
 		}
 	}
+}
+
+int mrp_reset(void *mrp)
+{
+	/* TODO */
+	return 0;
+}
+
+int mrp_bootp(int mrp)
+{
+	/* TODO */
+	return 0;
+}
+
+int mrp_cpr(int a)
+{
+	/* TODO */
+	return 0;
+}
+
+int mrp_cps(int a)
+{
+	/* TODO */
+	return 0;
+}
+
+void mrp_interrupt(int arg1, void *arg2, struct pt_regs *pt_regs)
+{
+	/* TODO */
+}
+
+int mrp_read(void *f, char *buffer, unsigned count, unsigned *ppos)
+{
+	/* TODO */
+	return 0;
+}
+
+int mrp_write(int a, int b, int addr, int size)
+{
+	/* TODO */
+	return 0;
+}
+
+int mrp_select(int a, int b, int c, int d)
+{
+	/* TODO */
+	return 0;
+}
+
+int mrp_open(int a)
+{
+	/* TODO */
+	return 0;
+}
+
+int mrp_release(int a)
+{
+	/* TODO */
+	return 0;
+}
+
+int mrp_ioctl(int a, int b, int cmd, int arg)
+{
+	/* TODO */
+	return 0;
 }
 
 int mrp_get_info(char *buf, char **start, off_t offset, int len, int unused)
