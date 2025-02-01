@@ -85,6 +85,10 @@ int mrp_recv(struct mrp_unit *mrp)
 
 int mrp_reset(void *mrp)
 {
+	if (mrp_debug > 1)
+		printk("mrp_reset:\n:");
+	cli();
+	udelay(10);
 	/* TODO */
 	return 0;
 }
