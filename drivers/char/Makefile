@@ -214,12 +214,22 @@ L_OBJS += ps2powctrl.o
 M = y
 endif
 
-ifeq ($(CONFIG_PS2_MRP),y)
+ifeq ($(CONFIG_PS2_MRP_DECI2),y)
 M = y
 L_OBJS += ps2mrp.o
 else
-  ifeq ($(CONFIG_PS2_MRP),m)
+  ifeq ($(CONFIG_PS2_MRP_DECI2),m)
   M_OBJS += ps2mrp.o
+  MM = m
+  endif
+endif
+
+ifeq ($(CONFIG_PS2_MRP_DECI1),y)
+M = y
+L_OBJS += ps2mrp-psnet.o
+else
+  ifeq ($(CONFIG_PS2_MRP_DECI1),m)
+  M_OBJS += ps2mrp-psnet.o
   MM = m
   endif
 endif

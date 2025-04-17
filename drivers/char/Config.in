@@ -80,5 +80,6 @@ if [ "$CONFIG_WATCHDOG" != "n" ]; then
 fi
 bool 'Enhanced Real Time Clock Support' CONFIG_RTC
 bool 'PS2 powctrl support' CONFIG_PS2_SBC_POWCTRL
-tristate 'PS2 MRP support' CONFIG_PS2_MRP
+tristate 'PS2 MRP-DECI2 support' CONFIG_PS2_MRP_DECI2
+tristate 'PS2 MRP-DECI1 support' CONFIG_PS2_MRP_DECI1
 endmenu
