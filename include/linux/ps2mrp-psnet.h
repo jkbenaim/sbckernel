@@ -1,3 +1,7 @@
+#ifndef _LINUX_PS2MRP_PSNET_H
+#define _LINUX_PS2MRP_PSNET_H
+#include <linux/proc_fs.h>
+
 #define MRP_PSNET_BUILDDATE "Mar 10 1999"
 #define MRP_PSNET_BUILDTIME "21:15:11"
 
@@ -113,14 +117,14 @@ enum idk4c_flags {
 };
 
 enum mrp_stat_flags {
-	MRP_STATF_01 = 0x01,
-	MRP_STATF_02 = 0x02,
-	MRP_STATF_04 = 0x04,
-	MRP_STATF_08 = 0x08,
-	MRP_STATF_10 = 0x10,
-	MRP_STATF_20 = 0x20,
-	MRP_STATF_40 = 0x40,
-	MRP_STATF_80 = 0x80
+	MRP_STATF_CPR	= 0x01,
+	MRP_STATF_CPS	= 0x02,
+	MRP_STATF_BOOTP	= 0x04,
+	MRP_STATF_RESET	= 0x08,
+	MRP_STATF_RECV	= 0x10,
+	MRP_STATF_WAKE	= 0x20,
+	MRP_STATF_40	= 0x40,
+	MRP_STATF_80	= 0x80
 };
 
 enum mrp_reset_flags {
@@ -177,19 +181,20 @@ mrp_put_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nw)
 static inline void
 mrp_get_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nw)
 {
+	int i;
 	if (mrp_debug > 2) {
 		printk("mrp_get_fifo: nw=%d\n", nw);
 	}
 	switch (nw & 7) {
-	case 7: buf++ = mrp->base2->fifoport;
-	case 6: buf++ = mrp->base2->fifoport;
-	case 5: buf++ = mrp->base2->fifoport;
-	case 4: buf++ = mrp->base2->fifoport;
-	case 3: buf++ = mrp->base2->fifoport;
-	case 2: buf++ = mrp->base2->fifoport;
-	case 1: buf++ = mrp->base2->fifoport;
+	case 7: *buf++ = mrp->base2->fifoport;
+	case 6: *buf++ = mrp->base2->fifoport;
+	case 5: *buf++ = mrp->base2->fifoport;
+	case 4: *buf++ = mrp->base2->fifoport;
+	case 3: *buf++ = mrp->base2->fifoport;
+	case 2: *buf++ = mrp->base2->fifoport;
+	case 1: *buf++ = mrp->base2->fifoport;
 	}
-	for (int i = 0; i < (nw/8); i++) {
+	for (i = 0; i < (nw/8); i++) {
 		buf[0] = mrp->base2->fifoport;
 		buf[1] = mrp->base2->fifoport;
 		buf[2] = mrp->base2->fifoport;
@@ -203,3 +208,36 @@ mrp_get_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nw)
 	mrp->mrpregs->rxc = 1;
 }
 
+extern int mrp_get_info(
+	char *buffer,
+	char **start,
+	off_t offset,
+	int length,
+	int dummy);
+extern int mrp_read(
+	struct inode *inode,
+	struct file *file,
+	char *buf,
+	int len);
+extern int mrp_write(
+	struct inode *inode,
+	struct file *file,
+	const char *buf,
+	int len);
+extern int mrp_select(
+	struct inode *inode,
+	struct file *file,
+	int sel_type,
+	select_table *wait);
+extern int mrp_ioctl(
+	struct inode *inode,
+	struct file *file,
+	unsigned int cmd,
+	unsigned long arg);
+extern int mrp_open(
+	struct inode *inode,
+	struct file *file);
+extern void mrp_release(
+	struct inode *inode,
+	struct file *file);
+#endif

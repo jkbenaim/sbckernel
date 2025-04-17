@@ -5,6 +5,7 @@
  * 	md5sum: 77187b9f4c836004398021a7ea32cd97
  */
 
+#include <linux/delay.h>
 #include <linux/proc_fs.h>
 #include <linux/ps2mrp-psnet.h>
 
@@ -14,10 +15,6 @@
  */
 
 unsigned int mrp_debug = 1;
-static struct proc_dir_entry mrp_proc_de = {
-	0, 3, "mrp", S_IFREG | S_IRUSR | S_IRGRP| S_IROTH, 1, 0, 0, 0, mrp_get_info
-};
-
 static struct file_operations mrp_fops = {
 	NULL,		/* seek */
 	mrp_read,	/* read */
@@ -28,6 +25,14 @@ static struct file_operations mrp_fops = {
 	NULL,		/* mmap */
 	mrp_open,	/* open */
 	mrp_release	/* release */
+};
+
+static struct proc_dir_entry mrp_proc_de = {
+	0, 3, "mrp",
+	S_IFREG | S_IRUSR | S_IRGRP| S_IROTH,
+	1, 0, 0, 0,
+	NULL,
+	mrp_get_info
 };
 
 unsigned int mrp_major;
@@ -85,15 +90,16 @@ int mrp_send(struct mrp_unit *mrp)
 
 int mrp_recv(struct mrp_unit *mrp)
 {
+	void *rbp;
 	if (mrp_debug > 1) {
 		printk("mrp_recv:\n");
 	}
 	if (!(mrp->flags & MRPF_RDONE)) {
 		return 0;
 	}
-	void *rbp = mrp->recvbuf;
+	rbp = mrp->recvbuf;
 	if (!(mrp->mrpregs->fst & 1)) {
-		while (true) {
+		while (1) {
 			mrp->buf20 = mrp->recvbuf;
 			if (mrp_debug > 2) {
 				printk("mrp_get_fifo: nw=%d\n", 1);
@@ -106,16 +112,16 @@ int mrp_recv(struct mrp_unit *mrp)
 				break;
 			}
 			/* TODO */
-			mrp->rlen = 
+			//mrp->rlen = 
 		}
 	}
-
+	return -1;
 }
 
 int mrp_reset(struct mrp_unit *mrp)
 {
 	unsigned long flags;
-	struct mrpregs *regs = mrp->regs;
+	volatile struct mrpregs *regs = mrp->mrpregs;
 
 	// note: on smp kernels, we should use lock_kernel/unlock_kernel instead of cli/save_flags/restore_flags
 
@@ -389,7 +395,7 @@ int mrp_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned
 	return -1;
 }
 
-int mrp_get_info(char *buffer, char **sdtart, off_t offset, int length, int dummy)
+int mrp_get_info(char *buffer, char **start, off_t offset, int length, int dummy)
 {
 	// TODO
 	int size;
