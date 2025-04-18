@@ -5,7 +5,10 @@
  * 	md5sum: 77187b9f4c836004398021a7ea32cd97
  */
 
+#include <linux/bios32.h>
 #include <linux/delay.h>
+#include <linux/fs.h>
+#include <linux/module.h>
 #include <linux/proc_fs.h>
 #include <linux/ps2mrp-psnet.h>
 
@@ -16,15 +19,12 @@
 
 unsigned int mrp_debug = 1;
 static struct file_operations mrp_fops = {
-	NULL,		/* seek */
-	mrp_read,	/* read */
-	mrp_write,	/* write */
-	NULL,		/* readdir */
-	mrp_select,	/* select */
-	mrp_ioctl,	/* ioctl */
-	NULL,		/* mmap */
-	mrp_open,	/* open */
-	mrp_release	/* release */
+	.read		= mrp_read,
+	.write		= mrp_write,
+	.select		= mrp_select,
+	.ioctl		= mrp_ioctl,
+	.open		= mrp_open,
+	.release	= mrp_release
 };
 
 static struct proc_dir_entry mrp_proc_de = {
@@ -49,8 +49,9 @@ struct mrp_unit mrp_units[4];
  *
  */
 
-void mrp_dump_regs(struct mrpregs *regs)
+void mrp_dump_regs(struct mrp_unit *mrp)
 {
+	typeof(mrp->regs) regs = mrp->regs;
 	if (mrp_debug > 2) {
 		printk("* BID=%04x RST=%04x CPS=%04x CPR=%04x\n",
 			regs->bid,
@@ -98,17 +99,17 @@ int mrp_recv(struct mrp_unit *mrp)
 		return 0;
 	}
 	rbp = mrp->recvbuf;
-	if (!(mrp->mrpregs->fst & 1)) {
+	if (!(mrp->regs->fst & 1)) {
 		while (1) {
 			mrp->buf20 = mrp->recvbuf;
 			if (mrp_debug > 2) {
 				printk("mrp_get_fifo: nw=%d\n", 1);
 			}
-			if (!(mrp->mrpregs->fst & 0x10)) {
+			if (!(mrp->regs->fst & 0x10)) {
 				if (mrp_debug > 0) {
-					printk("mrp_recv: invalid fifo status (%04x)\n", mrp->mrpregs->fst);
+					printk("mrp_recv: invalid fifo status (%04x)\n", mrp->regs->fst);
 				}
-				mrp->mrpregs->rxc = 1;
+				mrp->regs->rxc = 1;
 				break;
 			}
 			/* TODO */
@@ -121,7 +122,7 @@ int mrp_recv(struct mrp_unit *mrp)
 int mrp_reset(struct mrp_unit *mrp)
 {
 	unsigned long flags;
-	volatile struct mrpregs *regs = mrp->mrpregs;
+	volatile struct mrpregs *regs = mrp->regs;
 
 	// note: on smp kernels, we should use lock_kernel/unlock_kernel instead of cli/save_flags/restore_flags
 
@@ -144,23 +145,23 @@ int mrp_reset(struct mrp_unit *mrp)
 	udelay(20);
 	regs->ier = 0x15;
 	{
-		uint16_t tmp;
+		unsigned short tmp;
 		tmp = mrp->flags;
 		tmp |= MRPF_RESET;
 		tmp &= ~MRPF_SBUSY;
 		tmp &= ~MRPF_RDONE;
 		tmp &= ~MRPF_CPBUSY;
-		mrp->flags = rmp;
+		mrp->flags = tmp;
 	}
-	wake_up(mrp->wake_queue_3);
+	wake_up(&mrp->wake_queue3);
 	mrp->rlen = 0;
 	mrp->slen = 0;
-	mrp->ringbuf2_ptr_2 = 0;
-	mrp->unused_104c = 0;
-	mrp->ringbuf2_ptr_1 = 0;
-	mrp->unused_205c = 0;
-	mrp->ringbuf_idx_1 = 0;
-	mrp->ringbuf_idx_2 = 0;
+	mrp->sendring.read_index = 0;
+	mrp->sendring.write_index = 0;
+	mrp->sendring.count = 0;
+	mrp->recvring.read_index = 0;
+	mrp->recvring.write_index = 0;
+	mrp->recvring.count = 0;
 
 	restore_flags(flags);
 	return 0;
@@ -169,43 +170,37 @@ int mrp_reset(struct mrp_unit *mrp)
 int mrp_bootp(struct mrp_unit *mrp)
 {
 	// TODO
+	return 0;
 }
 
 void mrp_cpr(struct mrp_unit *mrp)
 {
-	struct mrpregs *regs = mrp->base_eb1;
-	uint8_t *buf[0x1000] = &mrp->ringbuf;
-	if (mrp->ringbuf_idx_2 <= 0xfff) {
-		mrp->ringbuf_idx_1 = buf + regs->cpr;
-		mrp->ringbuf_idx_1++;
-		mrp->ringbuf_idx_2++;
-		regs->csi = 1;
-		regs->fsi = 2;
-		regs->ier |= 1;
-		wake_up(&mrp->wake_queue);
+	if (mrp->recvring.count <= 0xfff) {
+		ringbuf_put(&mrp->recvring, mrp->regs->cpr);
+		mrp->regs->csi = 1;
+		mrp->regs->fsi = 2;
+		mrp->regs->ier |= MRP_STATF_CPR;
+		wake_up(&mrp->wake_queue1);
 	}
 }
 
-int mrp_cps(struct mrp_unit *mrp)
+void mrp_cps(struct mrp_unit *mrp)
 {
-	struct mrpregs *regs = mrp->regs;
-	uint8_t *buf[0x1000] = &mrp->ringbuf2;
-	enum mrp_flags flags = mrp->flags;
-	if (!(mrp->flags & MRPF_CPBUSY) && (mrp->ringbuf2_ptr_1 > 0)) {
-		mrp->flags |= MRPF_CPBUSY;
-		regs->cps = (mrp->ringbuf2_ptr_2 & 0xfff) + buf;
-		mrp->ringbuf2_ptr_2 = mrp->ringbuf2_ptr_2 + 1;
-		mrp->ringbuf2_ptr_1 = mrp->ringbuf2_ptr_2 - 1;
-		regs->fsi = 1;
-		regs->ier |= 2;
-		wake_up(mrp->wake_queue_2);
+	if (mrp->flags & MRPF_CPBUSY) {
+		if (mrp->sendring.count > 0) {
+			mrp->flags |= MRPF_CPBUSY;
+			mrp->regs->cpr = ringbuf_get(&mrp->sendring);
+			mrp->regs->fsi = 1;
+			mrp->regs->ier |= MRP_STATF_CPS;
+			wake_up(&mrp->wake_queue2);
+		}
 	}
 }
 
 void mrp_interrupt(int arg0, struct mrp_unit *mrp, void *pt_regs)
 {
 	unsigned long flags;
-	uint16_t stat;
+	unsigned short stat;
 	int index;
 
 	index = (mrp - mrp_units) / sizeof(struct mrp_unit);
@@ -227,40 +222,40 @@ void mrp_interrupt(int arg0, struct mrp_unit *mrp, void *pt_regs)
 	}
 
 	mrp->nintr++;
-	stat = mrp->mrpregs.ist & mrp->mrpregs.ier;
+	stat = mrp->regs->ist & mrp->regs->ier;
 	if (mrp_debug > 1) {
 		printk("mrp_interrupt: stat=0x%04x\n", stat);
 		mrp_dump_regs(mrp);
 	}
 
-	if (stat & (MRPF_STATF_10 | MRPF_STATF_20)) {
-		if (stat & MRP_STATF_08) {
-			mrp->mrpregs.rst &= (MRP_RESETF_2000 | MRP_RESETF_1000);
+	if (stat & (MRP_STATF_RECV | MRP_STATF_WAKE)) {
+		if (stat & MRP_STATF_RESET) {
+			mrp->regs->rst &= (MRP_RESETF_2000 | MRP_RESETF_1000);
 			mrp_reset(mrp);
-		} else if (stat & MRP_STATF_04) {
-			mrp->mrpregs.ier &= ~MRP_STATF_04;
+		} else if (stat & MRP_STATF_BOOTP) {
+			mrp->regs->ier &= ~MRP_STATF_BOOTP;
 			mrp_bootp(mrp);
-		} else if (stat & MRP_STATF_01) {
-			mrp->mrpregs.ier &= ~MRP_STATF_01;
+		} else if (stat & MRP_STATF_CPR) {
+			mrp->regs->ier &= ~MRP_STATF_CPR;
 			mrp_cpr(mrp);
-		} else if (stat & MRP_STATF_02) {
-			mrp->mrpregs.ier &= ~MRP_STATF_02;
-			mrp->mrpregs.csi = 2;
+		} else if (stat & MRP_STATF_CPS) {
+			mrp->regs->ier &= ~MRP_STATF_CPS;
+			mrp->regs->csi = 2;
 			mrp->flags &= ~MRPF_CPBUSY;
 			mrp_cps(mrp);
-			wake_up(mrp->wake_queue_2);
+			wake_up(&mrp->wake_queue2);
 		} else if (stat) {
 			printk("mrp%d: unexpected interrupt (stat=0x%x)\n", index, stat);
-			mrp->mrpregs.ier = 0;
+			mrp->regs->ier = 0;
 		}
 	} else {
-		if (stat & MRP_STATF_20) {
-			mrp->mrpregs->ier &= ~MRP_STATF_20;
+		if (stat & MRP_STATF_WAKE) {
+			mrp->regs->ier &= ~MRP_STATF_WAKE;
 			mrp->flags &= ~MRPF_SBUSY;
-			wake_up(mrp->wake_queue_3);
+			wake_up(&mrp->wake_queue3);
 		}
-		if (stat & MRP_STATF_10) {
-			mrp->mrpregs->ier &= ~MRP_STATF_10;
+		if (stat & MRP_STATF_RECV) {
+			mrp->regs->ier &= ~MRP_STATF_RECV;
 			mrp_recv(mrp);
 		}
 	}
@@ -268,13 +263,12 @@ void mrp_interrupt(int arg0, struct mrp_unit *mrp, void *pt_regs)
 	restore_flags(flags);
 }
 
-int mrp_read(struct inode *inode, struct file *file, char *buf, int len)
+int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 {
-	// TODO
 	struct mrp_unit *mrp;
 	int index, rc;
 
-	index = inode->major & 3;
+	index = MAJOR(inode->i_rdev) & 3;
 	mrp = &mrp_units[index];
 
 	if (mrp_debug > 1) {
@@ -287,8 +281,8 @@ int mrp_read(struct inode *inode, struct file *file, char *buf, int len)
 	if (!(mrp->flags & MRPF_VALID)) {
 		return -ENODEV;
 	}
-	if (inode->i_rdev.major & 0x40) {
-		if (!(mrpf->flags & MRP_OPENED)) {
+	if (MAJOR(inode->i_rdev) & 0x40) {
+		if (!(mrp->flags & MRPF_OPENED)) {
 			return -ENODEV;
 		}
 		if (mrp->flags & MRPF_RESET) {
@@ -302,31 +296,35 @@ int mrp_read(struct inode *inode, struct file *file, char *buf, int len)
 	}
 
 	rc = verify_area(VERIFY_WRITE, buf, nbytes);
+
+	/* TODO */
+	return -1;
 }
 
 int mrp_write(struct inode *inode, struct file *file, const char *buf, int len)
 {
 	// TODO
+	return 0;
 }
 
 int mrp_select(struct inode *inode, struct file *file, int sel_type, select_table *wait)
 {
 	// TODO
+	return 0;
 }
 
 int mrp_open(struct inode *inode, struct file *file)
 {
-	(void)file;
 	int bid, flags, index, major;
 	struct mrp_unit *mrp;
+
+	major = MAJOR(inode->i_rdev);
+	index = major & 3;
+	mrp = &mrp_units[index];
 
 	if (mrp_debug > 1) {
 		printk("mrp_open: index=%d\n", index);
 	}
-
-	major = inode->i_rdev.major;
-	index = major & 3;
-	mrp = &mrp_units[index];
 
 	if (index > 3) {
 		return -ENODEV;
@@ -337,7 +335,7 @@ int mrp_open(struct inode *inode, struct file *file)
 		return -ENODEV;
 	}
 
-	bid = mrp->mrpregs->bid;
+	bid = mrp->regs->bid;
 	if (bid != 0x4126) {
 		return -EIO;
 	}
@@ -354,16 +352,18 @@ int mrp_open(struct inode *inode, struct file *file)
 		flags |= MRPF_OPENED;
 	}
 	mrp->flags = flags;
-	MOD_USE_COUNT_INC;
+	MOD_INC_USE_COUNT;
+
+	/* TODO */
+	return 0;
 }
 
 void mrp_release(struct inode *inode, struct file *file)
 {
-	(void)file;
 	int index, major;
 	int flags;
 
-	major = inode->i_rdev.major;
+	major = MAJOR(inode->i_rdev);
 	index = major & 3;
 	flags = mrp_units[index].flags;
 
@@ -371,6 +371,7 @@ void mrp_release(struct inode *inode, struct file *file)
 		printk("mrp_release: index=%d\n", index);
 		return;
 	}
+	
 	if (index > 4) {
 		return;
 	}
@@ -386,7 +387,7 @@ void mrp_release(struct inode *inode, struct file *file)
 		return;
 	}
 	mrp_units[index].flags = flags;
-	MOD_USE_COUNT_DEC;
+	MOD_DEC_USE_COUNT;
 }
 
 int mrp_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
@@ -398,45 +399,45 @@ int mrp_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned
 int mrp_get_info(char *buffer, char **start, off_t offset, int length, int dummy)
 {
 	// TODO
-	int size;
+	int index, size;
 
 	size = sprintf(buffer, "DECI1 $Revision: 3.10 $ %s %s\n", MRP_PSNET_BUILDDATE, MRP_PSNET_BUILDTIME);
-	for (int index = 0; index < ARRAY_SIZE(mrp_units); i++) {
-		struct mrp_unit *unit = &mrp_units[i];
-		struct mrp_regs *regs = &unit->regs;
-		size += sprintf(buffer, "unit%d", i);
-		if (unit->flags & MRPF_DETECT) {
+	for (index = 0; index < MRP_UNIT_MAX; index++) {
+		struct mrp_unit *mrp = &mrp_units[index];
+		typeof(mrp->regs) regs = mrp->regs;
+		size += sprintf(buffer, "mrp%d", index);
+		if (mrp->flags & MRPF_DETECT) {
 			size += sprintf(buffer, " DETECT");
 		}
-		if (unit->flags & MRPF_VALID) {
+		if (mrp->flags & MRPF_VALID) {
 			size += sprintf(buffer, " VALID");
 		}
-		if (unit->flags & MRPF_RESET) {
+		if (mrp->flags & MRPF_RESET) {
 			size += sprintf(buffer, " RESET");
 		}
-		if (unit->flags & MRPF_OPENED) {
+		if (mrp->flags & MRPF_OPENED) {
 			size += sprintf(buffer, " OPENED");
 		}
-		if (unit->flags & MRPF_SBUSY) {
+		if (mrp->flags & MRPF_SBUSY) {
 			size += sprintf(buffer, " SBUSY");
 		}
-		if (unit->flags & MRPF_RDONE) {
+		if (mrp->flags & MRPF_RDONE) {
 			size += sprintf(buffer, " RDONE");
 		}
-		if (unit->flags & MRPF_REQTAG) {
+		if (mrp->flags & MRPF_REQTAG) {
 			size += sprintf(buffer, " REQTAG");
 		}
-		if (unit->flags & MRPF_CPOPEN) {
+		if (mrp->flags & MRPF_CPOPEN) {
 			size += sprintf(buffer, " CPOPEN");
 		}
-		if (unit->flags & MRPF_CPBUSY) {
+		if (mrp->flags & MRPF_CPBUSY) {
 			size += sprintf(buffer, " CPBUSY");
 		}
 
-		size += sprintf(buffer, " nintr=%d", unit->nintr);
+		size += sprintf(buffer, " nintr=%d", mrp->nintr);
 		size += sprintf(buffer, "\n");
 
-		if (unit->flags & MRPF_VALID) {
+		if (mrp->flags & MRPF_VALID) {
 			size += sprintf(buffer, " BID=%04x", regs->bid);
 			size += sprintf(buffer, " RST=%04x", regs->bid);
 			size += sprintf(buffer, " CPS=%04x", regs->bid);
@@ -474,7 +475,7 @@ int mrp_base(unsigned char bus, unsigned char dev_fn, unsigned char where)
 	return address & 0xf0;
 }
 
-void *mrp_remap(void *base)
+void *mrp_remap(unsigned int base)
 {
 	void *rc;
 	if (MAP_NR(base) < MAP_NR(high_memory)) {
@@ -504,14 +505,17 @@ int init_module(void)
 
 void cleanup_module(void)
 {
+	int index;
+	
 	if (mrp_major <= 0) {
 		return;
 	}
-	for (int index = 0; index < 4; index++) {
+	
+	for (index = 0; index < 4; index++) {
 		struct mrp_unit *mrp = &mrp_units[index];
 		if (mrp->flags & MRPF_VALID) {
-			mrp->eb5->idk50 |= 0x20;
-			mrp->eb5->idk4c &= ~0x40;
+			mrp->base0->idk50 |= 0x20;
+			mrp->base0->idk4c &= ~0x40;
 			free_irq(mrp->irq, mrp);
 		}
 		if (mrp->sendbuf)
@@ -522,15 +526,15 @@ void cleanup_module(void)
 			kfree(mrp->buf38);
 		if (mrp->buf40)
 			kfree(mrp->buf40);
-		if (mrp->eb5)
-			vfree(mrp->eb5;
-		if (mrp->eb0)
-			vfree(mrp->eb0);
-		if (mrp->mrpregs)
-			vfree(mrp->mrpregs);
+		if (mrp->base0)
+			vfree(mrp->base0);
+		if (mrp->base2)
+			vfree(mrp->base2);
+		if (mrp->regs)
+			vfree(mrp->regs);
 	}
 	unregister_chrdev(mrp_major, "mrp");
-	printl("mrp: unregistered character major %d\n", mrp_major);
-	proc_unregister(proc_root, mrp_proc_de);
+	printk("mrp: unregistered character major %d\n", mrp_major);
+	proc_unregister(&proc_root, mrp_proc_de.low_ino);
 }
 #endif

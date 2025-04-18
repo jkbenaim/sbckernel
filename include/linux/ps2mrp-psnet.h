@@ -1,9 +1,12 @@
 #ifndef _LINUX_PS2MRP_PSNET_H
 #define _LINUX_PS2MRP_PSNET_H
+#include <linux/fs.h>
 #include <linux/proc_fs.h>
 
 #define MRP_PSNET_BUILDDATE "Mar 10 1999"
 #define MRP_PSNET_BUILDTIME "21:15:11"
+
+#define MRP_UNIT_MAX (4)
 
 extern unsigned int mrp_debug;
 
@@ -51,6 +54,7 @@ struct base0 {
 };
 
 #define RINGBUF_SIZE (0x1000)
+#define RINGBUF_INDEX_MASK (0xfff)
 
 struct ringbuf_s {
 	unsigned char buf[RINGBUF_SIZE];
@@ -59,20 +63,52 @@ struct ringbuf_s {
 	unsigned int count;
 };
 
+static inline void ringbuf_put(struct ringbuf_s *ring, unsigned char x)
+{
+	size_t index;
+	index = ring->write_index & RINGBUF_INDEX_MASK;
+
+	ring->buf[index] = x;
+	ring->write_index ++;
+	ring->count ++;
+}
+
+static inline unsigned char ringbuf_get(struct ringbuf_s *ring)
+{
+	unsigned char rc;
+	size_t index;
+	index = ring->read_index & RINGBUF_INDEX_MASK;
+
+	rc = ring->buf[index];
+	ring->read_index ++;
+	ring->count --;
+	return rc;
+}
+
+static inline unsigned char *ringbuf_read_index(struct ringbuf_s *ring)
+{
+	unsigned char *rc;
+
+	rc = ring->buf;
+	rc += (ring->read_index & RINGBUF_INDEX_MASK);
+	return rc;
+}
+
+
 struct mrp_unit {
 	int flags;
 	int irq;
 	volatile struct base0 *base0;
 	volatile struct base2 *base2;
-	volatile struct mrpregs *mrpregs;
+	volatile struct mrpregs *regs;
 	void *sendbuf;
 	void *recvbuf;
 	int *buf1c;
 	void *buf20;
 	int slen;
 	int rlen;
-	void *wake_queue_4;
-	void *wake_queue_3;
+	struct wait_queue *wake_queue4;
+	struct wait_queue *wake_queue3;
 	int nintr;
 	void *buf38;
 	int nbytes38;
@@ -81,8 +117,8 @@ struct mrp_unit {
 	int int48;
 	struct ringbuf_s sendring;
 	struct ringbuf_s recvring;
-	void *wake_queue;
-	void *wake_queue_2;
+	struct wait_queue *wake_queue1;
+	struct wait_queue *wake_queue2;
 };
 
 enum mrp_flags {
@@ -173,8 +209,8 @@ mrp_put_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nw)
 		mrp->base2->fifoport = buf[7];
 		buf += 8;
 	}
-	mrp->mrpregs->txc = 1;
-	mrp->mrpregs->ier |= MRP_STATF_WAKE;
+	mrp->regs->txc = 1;
+	mrp->regs->ier |= MRP_STATF_WAKE;
 	mrp->flags |= MRPF_SBUSY;
 }
 
@@ -205,7 +241,7 @@ mrp_get_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nw)
 		buf[7] = mrp->base2->fifoport;
 		buf += 8;
 	}
-	mrp->mrpregs->rxc = 1;
+	mrp->regs->rxc = 1;
 }
 
 extern int mrp_get_info(
