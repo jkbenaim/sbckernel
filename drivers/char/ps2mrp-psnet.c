@@ -5,6 +5,7 @@
  * 	md5sum: 77187b9f4c836004398021a7ea32cd97
  */
 
+#include <asm/byteorder.h>
 #include <linux/bios32.h>
 #include <linux/delay.h>
 #include <linux/fs.h>
@@ -54,7 +55,7 @@ struct mrp_unit mrp_units[4];
 void mrp_dump_regs(struct mrp_unit *mrp)
 {
 	typeof(mrp->regs) regs = mrp->regs;
-	if (mrp_debug > 2) {
+	if (mrp_debug >= 3) {
 		printk("* BID=%04x RST=%04x CPS=%04x CPR=%04x\n",
 			regs->bid,
 			regs->rst,
@@ -79,47 +80,67 @@ void mrp_dump_regs(struct mrp_unit *mrp)
 
 int mrp_send(struct mrp_unit *mrp)
 {
-	int nw;
+	mrp_printk(2, "mrp_send: slen=%d\n", mrp->slen);
 
-	if (mrp_debug >= 2) {
-		int slen = mrp->slen;
-		printk("mrp_send: slen=%d\n", slen);
-	}
-
-	nw = (mrp->slen + 3) >> 2;
-
-	mrp_put_fifo(mrp, mrp->buf1c, nw);
-
-	return nw;
+	return mrp_put_fifo(mrp, mrp->deci_out, mrp->slen);
 }
 
 int mrp_recv(struct mrp_unit *mrp)
 {
-	void *rbp;
-	if (mrp_debug > 1) {
-		printk("mrp_recv:\n");
-	}
+	__label__ out_error;
+	struct decihdr_s *hdr;
+	
+	mrp_printk(2, "mrp_recv:\n");
 	if (!(mrp->flags & MRPF_RDONE)) {
 		return 0;
 	}
-	rbp = mrp->recvbuf;
-	if (!(mrp->regs->fst & 1)) {
-		while (1) {
-			mrp->buf20 = mrp->recvbuf;
-			if (mrp_debug > 2) {
-				printk("mrp_get_fifo: nw=%d\n", 1);
-			}
-			if (!(mrp->regs->fst & 0x10)) {
-				if (mrp_debug > 0) {
-					printk("mrp_recv: invalid fifo status (%04x)\n", mrp->regs->fst);
-				}
-				mrp->regs->rxc = 1;
-				break;
-			}
-			/* TODO */
-			//mrp->rlen = 
-		}
+	if (mrp->regs->fst & MRP_FSTF_0001) {
+		mrp_printk(1, "mrp_recv: invalid fifo status (%04x)\n", mrp->regs->fst);
+		goto out_error;
 	}
+
+	do {
+		mrp->deci_in = hdr = (struct decihdr_s *) mrp->recvbuf;	// woof!
+
+		mrp_get_fifo(mrp, mrp->recvbuf, 4);
+		if (!(mrp->regs->fst & MRP_FSTF_0010)) {
+			mrp_printk(1, "mrp_recv: invalid fifo status (%04x)\n", mrp->regs->fst);
+			goto out_error;
+		}
+
+		mrp->rlen = hdr->size;
+		mrp->deci_in += 4;
+
+		if ( (hdr->magic != DECI_MAGIC) || (hdr->size > MRP_MAX_PKT_SIZE) ) {
+			if (mrp->regs->fst & MRP_FSTF_0001) {
+				mrp_printk(1, "mrp_recv: bad mag/len (%04x/%04x)\n",
+					hdr->magic,
+					hdr->size
+				);
+				goto out_error;
+			}
+			mrp_printk(1, "mrp_recv: rescanning (%04x/%04x)\n",
+				hdr->magic,
+				hdr->size
+			);
+		}
+	} while ( (hdr->magic != DECI_MAGIC) || (hdr->size > MRP_MAX_PKT_SIZE) );
+
+	mrp_get_fifo(mrp, mrp->deci_in, mrp->rlen - 4);
+	if (hdr->cksum == deci_cksum((unsigned int *) hdr)) {
+		mrp_printk(2, "mrp_recv: len=%d\n", mrp->rlen);
+		mrp->flags |= MRPF_RDONE;
+		wake_up(&mrp->wake_queue4);
+	} else {
+		mrp_printk(1, "mrp_recv: bad sum\n");
+		mrp->regs->ier |= MRP_STATF_RECV;
+	}
+	
+	return 1;
+
+out_error:
+	mrp->regs->rxc = 1;
+	mrp->regs->ier |= MRP_STATF_RECV;
 	return -1;
 }
 
@@ -130,9 +151,7 @@ int mrp_reset(struct mrp_unit *mrp)
 
 	// note: on smp kernels, we should use lock_kernel/unlock_kernel instead of cli/save_flags/restore_flags
 
-	if (mrp_debug > 1) {
-		printk("mrp_reset:\n");
-	}
+	mrp_printk(2, "mrp_reset:\n");
 
 	save_flags(flags);
 	cli();
@@ -175,9 +194,7 @@ int mrp_bootp(struct mrp_unit *mrp)
 {
 	unsigned short cpr = mrp->regs->cpr;
 
-	if (mrp_debug >= 2) {
-		printk("mrp_bootp: cpr=0x%04x\n", mrp->regs->cpr);
-	}
+	mrp_printk(2, "mrp_bootp: cpr=0x%04x\n", cpr);
 	
 	mrp->regs->fst = MRP_FSTF_0040 | MRP_FSTF_0080 | MRP_FSTF_4000 | MRP_FSTF_8000;
 	udelay(10);
@@ -258,8 +275,8 @@ void mrp_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 
 	mrp->nintr++;
 	stat = mrp->regs->ist & mrp->regs->ier;
-	if (mrp_debug > 1) {
-		printk("mrp_interrupt: stat=0x%04x\n", stat);
+	if (mrp_debug >= 2) {
+		mrp_printk(2, "mrp_interrupt: stat=0x%04x\n", stat);
 		mrp_dump_regs(mrp);
 	}
 
@@ -306,9 +323,7 @@ int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 	index = MAJOR(inode->i_rdev) & 3;
 	mrp = &mrp_units[index];
 
-	if (mrp_debug > 1) {
-		printk("mrp_read: count=%d\n", nbytes);
-	}
+	mrp_printk(2, "mrp_read: count=%d\n", nbytes);
 
 	if (index > 3) {
 		return -ENODEV;
@@ -357,9 +372,7 @@ int mrp_open(struct inode *inode, struct file *file)
 	index = major & 3;
 	mrp = &mrp_units[index];
 
-	if (mrp_debug > 1) {
-		printk("mrp_open: index=%d\n", index);
-	}
+	mrp_printk(2, "mrp_open: index=%d\n", index);
 
 	if (index > 3) {
 		return -ENODEV;
@@ -402,9 +415,7 @@ void mrp_release(struct inode *inode, struct file *file)
 	index = major & 3;
 	flags = mrp_units[index].flags;
 
-	if (mrp_debug > 1) {
-		printk("mrp_release: index=%d\n", index);
-	}
+	mrp_printk(2, "mrp_release: index=%d\n", index);
 	
 	if (index > 4) {
 		return;
@@ -595,14 +606,14 @@ int mrp_init(void)
 			continue;
 		}
 		
-		rc = kmalloc(0x4000, GFP_KERNEL);
+		rc = kmalloc(MRP_MAX_PKT_SIZE, GFP_KERNEL);
 		if (!rc) {
 			printk("mrp%d: no space for send buffer\n", index);
 			continue;
 		}
 		mrp->sendbuf = rc;
 
-		rc = kmalloc(0x4000, GFP_KERNEL);
+		rc = kmalloc(MRP_MAX_PKT_SIZE, GFP_KERNEL);
 		if (!rc) {
 			printk("mrp%d: no space for recv buffer\n", index);
 			continue;

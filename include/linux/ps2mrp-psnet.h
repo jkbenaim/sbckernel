@@ -7,6 +7,12 @@
 #define MRP_PSNET_BUILDTIME "21:15:11"
 
 #define MRP_UNIT_MAX (4)
+#define MRP_MAX_PKT_SIZE (0x4000)
+
+#define mrp_printk(level, fmt, arg...)	\
+	if (mrp_debug >= level) {	\
+		printk(fmt, ##arg);	\
+	}
 
 extern int mrp_debug;
 
@@ -93,8 +99,8 @@ struct mrp_unit {
 	struct mrpregs *regs;
 	void *sendbuf;
 	void *recvbuf;
-	int *buf1c;
-	void *buf20;
+	void *deci_out;
+	void *deci_in;
 	int slen;
 	int rlen;
 	struct wait_queue *wake_queue4;
@@ -110,6 +116,39 @@ struct mrp_unit {
 	struct wait_queue *wake_queue1;
 	struct wait_queue *wake_queue2;
 };
+
+struct decihdr_s {
+	unsigned short magic;
+	unsigned short size;
+	unsigned int category;
+	unsigned short priority;
+	unsigned short reply;
+	unsigned char tag;
+	unsigned char acktag;
+	unsigned char ackcode;
+	unsigned char pad;
+	unsigned int crsv;
+	unsigned short cid;
+	unsigned short seq;
+	unsigned int req;
+	unsigned int cksum;
+} __attribute__((packed));
+
+#define DECI_MAGIC (0xa14c)
+
+static inline unsigned int
+deci_cksum(unsigned int *hdr)
+{
+	unsigned int rc;
+	rc = hdr[0];
+	rc += hdr[1];
+	rc += hdr[2];
+	rc += hdr[3];
+	rc += hdr[4];
+	rc += hdr[5];
+	rc += hdr[6];
+	return rc;
+}
 
 enum mrp_flags {
 	MRPF_DETECT = 0x0001,
@@ -215,14 +254,15 @@ enum mrp_cpr_flags {
 	MRP_CPRF_8000 = 0x8000
 };
 
-static inline void
-mrp_put_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nw)
+static inline unsigned
+mrp_put_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nbytes)
 {
 	volatile struct base2 *base2 = mrp->base2;
 	unsigned loops = 0;
-	if (mrp_debug > 2) {
-		printk("mrp_put_fifo: nw=%d\n", nw);
-	}
+	unsigned nw = (nbytes + 3) >> 2;
+	
+	mrp_printk(3, "mrp_put_fifo: nw=%d\n", nw);
+	
 	switch (nw & 7) {
 	case 7:	base2->fifoport = *buf++;
 	case 6:	base2->fifoport = *buf++;
@@ -249,16 +289,19 @@ mrp_put_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nw)
 	mrp->regs->txc = 1;
 	mrp->regs->ier |= MRP_STATF_WAKE;
 	mrp->flags |= MRPF_SBUSY;
+
+	return nw;
 }
 
 static inline void
-mrp_get_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nw)
+mrp_get_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nbytes)
 {
 	volatile struct base2 *base2 = mrp->base2;
-	int i;
-	if (mrp_debug >= 3) {
-		printk("mrp_get_fifo: nw=%d\n", nw);
-	}
+	unsigned loops = 0;
+	unsigned nw = (nbytes + 3) >> 2;
+	
+	mrp_printk(3, "mrp_get_fifo: nw=%d\n", nw);
+
 	switch (nw & 7) {
 	case 7: *buf++ = base2->fifoport;
 	case 6: *buf++ = base2->fifoport;
@@ -267,9 +310,10 @@ mrp_get_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nw)
 	case 3: *buf++ = base2->fifoport;
 	case 2: *buf++ = base2->fifoport;
 	case 1: *buf++ = base2->fifoport;
-	case 0: break;
+	default:
+	case 0: loops = nw >> 3;
 	}
-	for (i = 0; i < (nw/8); i++) {
+	while (loops) {
 		buf[0] = base2->fifoport;
 		buf[1] = base2->fifoport;
 		buf[2] = base2->fifoport;
@@ -279,6 +323,7 @@ mrp_get_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nw)
 		buf[6] = base2->fifoport;
 		buf[7] = base2->fifoport;
 		buf += 8;
+		loops--;
 	}
 	mrp->regs->rxc = 1;
 }
