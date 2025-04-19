@@ -9,6 +9,7 @@
 #include <linux/delay.h>
 #include <linux/fs.h>
 #include <linux/module.h>
+#include <linux/pci.h>
 #include <linux/proc_fs.h>
 #include <linux/ps2mrp-psnet.h>
 
@@ -17,15 +18,7 @@
  *
  */
 
-unsigned int mrp_debug = 1;
-static struct file_operations mrp_fops = {
-	.read		= mrp_read,
-	.write		= mrp_write,
-	.select		= mrp_select,
-	.ioctl		= mrp_ioctl,
-	.open		= mrp_open,
-	.release	= mrp_release
-};
+int mrp_debug = 1;
 
 static struct proc_dir_entry mrp_proc_de = {
 	0, 3, "mrp",
@@ -35,7 +28,16 @@ static struct proc_dir_entry mrp_proc_de = {
 	mrp_get_info
 };
 
-unsigned int mrp_major;
+static struct file_operations mrp_fops = {
+	.read		= mrp_read,
+	.write		= mrp_write,
+	.select		= mrp_select,
+	.ioctl		= mrp_ioctl,
+	.open		= mrp_open,
+	.release	= mrp_release
+};
+
+unsigned int mrp_major = 0;
 
 /*
  * .bss
@@ -79,11 +81,13 @@ int mrp_send(struct mrp_unit *mrp)
 {
 	int nw;
 
-	if (mrp_debug > 1) {
-		printk("mrp_send: slen=%d\n", mrp->slen);
+	if (mrp_debug >= 2) {
+		int slen = mrp->slen;
+		printk("mrp_send: slen=%d\n", slen);
 	}
 
-	nw = (mrp->slen + 3)/4;
+	nw = (mrp->slen + 3) >> 2;
+
 	mrp_put_fifo(mrp, mrp->buf1c, nw);
 
 	return nw;
@@ -169,7 +173,36 @@ int mrp_reset(struct mrp_unit *mrp)
 
 int mrp_bootp(struct mrp_unit *mrp)
 {
-	// TODO
+	unsigned short cpr = mrp->regs->cpr;
+
+	if (mrp_debug >= 2) {
+		printk("mrp_bootp: cpr=0x%04x\n", mrp->regs->cpr);
+	}
+	
+	mrp->regs->fst = MRP_FSTF_0040 | MRP_FSTF_0080 | MRP_FSTF_4000 | MRP_FSTF_8000;
+	udelay(10);
+	mrp->regs->fst = 0;
+	mrp->flags &= MRPF_SBUSY | MRPF_RDONE;
+	mrp->rlen = 0;
+	mrp->slen = 0;
+	if (cpr & MRP_CPRF_0100) {
+		if (cpr & MRP_CPRF_0200) {
+			wake_up(&mrp->wake_queue3);
+			cpr = 0x0f00;
+		} else {
+			if (mrp->buf40) {
+				mrp_put_fifo(mrp, mrp->buf40, mrp->nbytes40);
+			}
+		}
+	} else {
+		if (mrp->buf38) {
+			mrp_put_fifo(mrp, mrp->buf38, mrp->nbytes38);
+		}
+	}
+	mrp->regs->cps = cpr;
+	mrp->regs->csi = 4;
+	mrp->regs->fsi = 4;
+	mrp->regs->ier |= MRP_STATF_BOOTP;
 	return 0;
 }
 
@@ -197,11 +230,13 @@ void mrp_cps(struct mrp_unit *mrp)
 	}
 }
 
-void mrp_interrupt(int arg0, struct mrp_unit *mrp, void *pt_regs)
+void mrp_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	unsigned long flags;
 	unsigned short stat;
 	int index;
+	struct mrp_unit *mrp;
+	mrp = (struct mrp_unit *) dev_id;
 
 	index = (mrp - mrp_units) / sizeof(struct mrp_unit);
 
@@ -369,7 +404,6 @@ void mrp_release(struct inode *inode, struct file *file)
 
 	if (mrp_debug > 1) {
 		printk("mrp_release: index=%d\n", index);
-		return;
 	}
 	
 	if (index > 4) {
@@ -398,14 +432,13 @@ int mrp_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned
 
 int mrp_get_info(char *buffer, char **start, off_t offset, int length, int dummy)
 {
-	// TODO
 	int index, size;
 
 	size = sprintf(buffer, "DECI1 $Revision: 3.10 $ %s %s\n", MRP_PSNET_BUILDDATE, MRP_PSNET_BUILDTIME);
 	for (index = 0; index < MRP_UNIT_MAX; index++) {
 		struct mrp_unit *mrp = &mrp_units[index];
 		typeof(mrp->regs) regs = mrp->regs;
-		size += sprintf(buffer, "mrp%d", index);
+		size += sprintf(buffer, "unit%d", index);
 		if (mrp->flags & MRPF_DETECT) {
 			size += sprintf(buffer, " DETECT");
 		}
@@ -445,14 +478,14 @@ int mrp_get_info(char *buffer, char **start, off_t offset, int length, int dummy
 			size += sprintf(buffer, " FST=%04x", regs->bid);
 			size += sprintf(buffer, " TXC=%04x", regs->bid);
 			size += sprintf(buffer, " RXC=%04x", regs->bid);
-			size += sprintf(buffer, " F1C=%04x", regs->bid);
+			size += sprintf(buffer, " F1C=%04x\n", regs->bid);
 			size += sprintf(buffer, " IST=%04x", regs->bid);
 			size += sprintf(buffer, " ISP=%04x", regs->bid);
 			size += sprintf(buffer, " IER=%04x", regs->bid);
 			size += sprintf(buffer, " CSI=%04x", regs->bid);
 			size += sprintf(buffer, " FSI=%04x", regs->bid);
 			size += sprintf(buffer, " AEO=%04x", regs->bid);
-			size += sprintf(buffer, " AFO=%04x", regs->bid);
+			size += sprintf(buffer, " AFO=%04x\n", regs->bid);
 		}
 	}
 	
@@ -493,8 +526,110 @@ void *mrp_remap(unsigned int base)
 
 int mrp_init(void)
 {
-	// TODO
-	return -1;
+	int index = 0;
+	int boards_found = 0;
+	int iRc;
+
+	memset(mrp_units, 0, sizeof(mrp_units));
+	
+	if (!pcibios_present()) {
+		return 0;
+	}
+
+	for (index = 0; index < MRP_UNIT_MAX; index++) {
+		int base0, base2, base3;
+		unsigned char pci_bus, pci_device_fn, pci_irq_line;
+		void *rc;
+		if (pcibios_find_device(PCI_VENDOR_ID_SONY,
+					PCI_DEVICE_ID_SONY_PS2_MRP,
+					index, &pci_bus,
+					&pci_device_fn))
+			break;
+		base0 = mrp_base(pci_bus, pci_device_fn, PCI_BASE_ADDRESS_0);
+		if (!base0) continue;
+		base2 = mrp_base(pci_bus, pci_device_fn, PCI_BASE_ADDRESS_2);
+		if (!base2) continue;
+		base3 = mrp_base(pci_bus, pci_device_fn, PCI_BASE_ADDRESS_3);
+		if (!base3) continue;
+
+		rc = mrp_remap(base0);
+		if (!rc) continue;
+		mrp_units[index].base0 = rc;
+		
+		rc = mrp_remap(base2);
+		if (!rc) continue;
+		mrp_units[index].base2 = rc;
+		
+		rc = mrp_remap(base3);
+		if (!rc) continue;
+		mrp_units[index].regs = rc;
+
+		if (pcibios_read_config_byte(pci_bus, pci_device_fn,
+					PCI_INTERRUPT_LINE, &pci_irq_line)) {
+			printk("mrp: can't read config (IRQ)\n");
+			continue;
+		}
+		mrp_units[index].irq = pci_irq_line;
+		printk("mrp: unit %d at 0x%x,0x%x,0x%x (irc = %d)\n",
+			index, base0, base2, base3, pci_irq_line);
+		mrp_units[index].flags |= MRPF_DETECT;
+		boards_found++;
+	}
+	if (boards_found == 0) {
+		return 0;
+	}
+
+	iRc = register_chrdev(0, "mrp", &mrp_fops);
+	if (iRc <= 0) {
+		printk("mrp: unable to get dynamic major\n");
+		return 0;
+	}
+	mrp_major = iRc;
+	printk("mrp: registered character major %d\n", iRc);
+
+	proc_register_dynamic(&proc_root, &mrp_proc_de);
+	for (index = 0; index < 4; index++) {
+		void *rc;
+		struct mrp_unit *mrp = &mrp_units[index];
+		if ((mrp->flags & MRPF_DETECT) == 0) {
+			continue;
+		}
+		
+		rc = kmalloc(0x4000, GFP_KERNEL);
+		if (!rc) {
+			printk("mrp%d: no space for send buffer\n", index);
+			continue;
+		}
+		mrp->sendbuf = rc;
+
+		rc = kmalloc(0x4000, GFP_KERNEL);
+		if (!rc) {
+			printk("mrp%d: no space for recv buffer\n", index);
+			continue;
+		}
+		mrp->recvbuf = rc;
+
+		iRc = request_irq(mrp->irq, mrp_interrupt,
+				SA_INTERRUPT|SA_SHIRQ, "MRP", mrp);
+		if (!iRc) {
+			/* try again, without SA_INTERRUPT */
+			iRc = request_irq(mrp->irq, mrp_interrupt,
+					SA_SHIRQ, "MRP", mrp);
+		}
+		if (!iRc) {
+			printk("mrp%d: can't register irq\n", index);
+			continue;
+		}
+		mrp->base0->idk50 &= ~IDK50F_00000020;
+		mrp->base0->idk50 |=  IDK50F_40000000;
+		udelay(10);
+		mrp->base0->idk50 &= ~IDK50F_40000000;
+		mrp->base0->idk4c |= IDK4CF_0040;
+		mrp->regs->ier = 0;
+		mrp->flags |= MRPF_VALID;
+
+	}
+	return 0;
 }
 
 #ifdef MODULE

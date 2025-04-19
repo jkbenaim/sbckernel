@@ -8,7 +8,7 @@
 
 #define MRP_UNIT_MAX (4)
 
-extern unsigned int mrp_debug;
+extern int mrp_debug;
 
 struct base2 {
 	volatile int fifoport;
@@ -85,22 +85,12 @@ static inline unsigned char ringbuf_get(struct ringbuf_s *ring)
 	return rc;
 }
 
-static inline unsigned char *ringbuf_read_index(struct ringbuf_s *ring)
-{
-	unsigned char *rc;
-
-	rc = ring->buf;
-	rc += (ring->read_index & RINGBUF_INDEX_MASK);
-	return rc;
-}
-
-
 struct mrp_unit {
 	int flags;
 	int irq;
-	volatile struct base0 *base0;
-	volatile struct base2 *base2;
-	volatile struct mrpregs *regs;
+	struct base0 *base0;
+	struct base2 *base2;
+	struct mrpregs *regs;
 	void *sendbuf;
 	void *recvbuf;
 	int *buf1c;
@@ -133,6 +123,25 @@ enum mrp_flags {
 	MRPF_CPBUSY = 0x0100
 };
 
+enum mrp_fst_e {
+	MRP_FSTF_0001 = 0x0001,
+	MRP_FSTF_0002 = 0x0002,
+	MRP_FSTF_0004 = 0x0004,
+	MRP_FSTF_0008 = 0x0008,
+	MRP_FSTF_0010 = 0x0010,
+	MRP_FSTF_0020 = 0x0020,
+	MRP_FSTF_0040 = 0x0040,
+	MRP_FSTF_0080 = 0x0080,
+	MRP_FSTF_0100 = 0x0100,
+	MRP_FSTF_0200 = 0x0200,
+	MRP_FSTF_0400 = 0x0400,
+	MRP_FSTF_0800 = 0x0800,
+	MRP_FSTF_1000 = 0x1000,
+	MRP_FSTF_2000 = 0x2000,
+	MRP_FSTF_4000 = 0x4000,
+	MRP_FSTF_8000 = 0x8000
+};
+
 enum idk4c_flags {
 	IDK4CF_0001 = 0x0001,
 	IDK4CF_0002 = 0x0002,
@@ -150,6 +159,11 @@ enum idk4c_flags {
 	IDK4CF_2000 = 0x2000,
 	IDK4CF_4000 = 0x4000,
 	IDK4CF_8000 = 0x8000
+};
+
+enum idk50_flags {
+	IDK50F_00000020 = 0x00000020,
+	IDK50F_40000000 = 0x40000000
 };
 
 enum mrp_stat_flags {
@@ -182,32 +196,55 @@ enum mrp_reset_flags {
 	MRP_RESETF_8000 = 0x8000
 };
 
+enum mrp_cpr_flags {
+	MRP_CPRF_0001 = 0x0001,
+	MRP_CPRF_0002 = 0x0002,
+	MRP_CPRF_0004 = 0x0004,
+	MRP_CPRF_0008 = 0x0008,
+	MRP_CPRF_0010 = 0x0010,
+	MRP_CPRF_0020 = 0x0020,
+	MRP_CPRF_0040 = 0x0040,
+	MRP_CPRF_0080 = 0x0080,
+	MRP_CPRF_0100 = 0x0100,
+	MRP_CPRF_0200 = 0x0200,
+	MRP_CPRF_0400 = 0x0400,
+	MRP_CPRF_0800 = 0x0800,
+	MRP_CPRF_1000 = 0x1000,
+	MRP_CPRF_2000 = 0x2000,
+	MRP_CPRF_4000 = 0x4000,
+	MRP_CPRF_8000 = 0x8000
+};
+
 static inline void
 mrp_put_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nw)
 {
-	int i;
+	volatile struct base2 *base2 = mrp->base2;
+	unsigned loops = 0;
 	if (mrp_debug > 2) {
 		printk("mrp_put_fifo: nw=%d\n", nw);
 	}
 	switch (nw & 7) {
-	case 7:	mrp->base2->fifoport = *buf++;
-	case 6:	mrp->base2->fifoport = *buf++;
-	case 5:	mrp->base2->fifoport = *buf++;
-	case 4:	mrp->base2->fifoport = *buf++;
-	case 3:	mrp->base2->fifoport = *buf++;
-	case 2:	mrp->base2->fifoport = *buf++;
-	case 1:	mrp->base2->fifoport = *buf++;
+	case 7:	base2->fifoport = *buf++;
+	case 6:	base2->fifoport = *buf++;
+	case 5:	base2->fifoport = *buf++;
+	case 4:	base2->fifoport = *buf++;
+	case 3:	base2->fifoport = *buf++;
+	case 2:	base2->fifoport = *buf++;
+	case 1:	base2->fifoport = *buf++;
+	default:
+	case 0: loops = nw >> 3;
 	}
-	for (i = 0; i < (nw/8); i++) {
-		mrp->base2->fifoport = buf[0];
-		mrp->base2->fifoport = buf[1];
-		mrp->base2->fifoport = buf[2];
-		mrp->base2->fifoport = buf[3];
-		mrp->base2->fifoport = buf[4];
-		mrp->base2->fifoport = buf[5];
-		mrp->base2->fifoport = buf[6];
-		mrp->base2->fifoport = buf[7];
+	while (loops) {
+		base2->fifoport = buf[0];
+		base2->fifoport = buf[1];
+		base2->fifoport = buf[2];
+		base2->fifoport = buf[3];
+		base2->fifoport = buf[4];
+		base2->fifoport = buf[5];
+		base2->fifoport = buf[6];
+		base2->fifoport = buf[7];
 		buf += 8;
+		loops--;
 	}
 	mrp->regs->txc = 1;
 	mrp->regs->ier |= MRP_STATF_WAKE;
@@ -217,28 +254,30 @@ mrp_put_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nw)
 static inline void
 mrp_get_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nw)
 {
+	volatile struct base2 *base2 = mrp->base2;
 	int i;
-	if (mrp_debug > 2) {
+	if (mrp_debug >= 3) {
 		printk("mrp_get_fifo: nw=%d\n", nw);
 	}
 	switch (nw & 7) {
-	case 7: *buf++ = mrp->base2->fifoport;
-	case 6: *buf++ = mrp->base2->fifoport;
-	case 5: *buf++ = mrp->base2->fifoport;
-	case 4: *buf++ = mrp->base2->fifoport;
-	case 3: *buf++ = mrp->base2->fifoport;
-	case 2: *buf++ = mrp->base2->fifoport;
-	case 1: *buf++ = mrp->base2->fifoport;
+	case 7: *buf++ = base2->fifoport;
+	case 6: *buf++ = base2->fifoport;
+	case 5: *buf++ = base2->fifoport;
+	case 4: *buf++ = base2->fifoport;
+	case 3: *buf++ = base2->fifoport;
+	case 2: *buf++ = base2->fifoport;
+	case 1: *buf++ = base2->fifoport;
+	case 0: break;
 	}
 	for (i = 0; i < (nw/8); i++) {
-		buf[0] = mrp->base2->fifoport;
-		buf[1] = mrp->base2->fifoport;
-		buf[2] = mrp->base2->fifoport;
-		buf[3] = mrp->base2->fifoport;
-		buf[4] = mrp->base2->fifoport;
-		buf[5] = mrp->base2->fifoport;
-		buf[6] = mrp->base2->fifoport;
-		buf[7] = mrp->base2->fifoport;
+		buf[0] = base2->fifoport;
+		buf[1] = base2->fifoport;
+		buf[2] = base2->fifoport;
+		buf[3] = base2->fifoport;
+		buf[4] = base2->fifoport;
+		buf[5] = base2->fifoport;
+		buf[6] = base2->fifoport;
+		buf[7] = base2->fifoport;
 		buf += 8;
 	}
 	mrp->regs->rxc = 1;
