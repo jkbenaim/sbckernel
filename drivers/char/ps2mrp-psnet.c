@@ -52,6 +52,34 @@ struct mrp_unit mrp_units[4];
  *
  */
 
+/* Compatibility Linux-2.0.X <-> Linux-2.1.X */
+/* Shamelessly stolen from include/linux/isdnif.h */
+
+#ifndef LINUX_VERSION_CODE
+#include <linux/version.h>
+#endif
+#if (LINUX_VERSION_CODE < 0x020100)
+#include <linux/mm.h>
+
+static inline unsigned long copy_from_user(void *to, const void *from, unsigned long n)
+{
+        int i;
+        if ((i = verify_area(VERIFY_READ, from, n)) != 0)
+                return i;
+        memcpy_fromfs(to, from, n);
+        return 0;
+}
+
+static inline unsigned long copy_to_user(void *to, const void *from, unsigned long n)
+{
+        int i;
+        if ((i = verify_area(VERIFY_WRITE, to, n)) != 0)
+                return i;
+        memcpy_tofs(to, from, n);
+        return 0;
+}
+#endif
+
 void mrp_dump_regs(struct mrp_unit *mrp)
 {
 	typeof(mrp->regs) regs = mrp->regs;
@@ -328,7 +356,7 @@ int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 	if (index > 3) {
 		return -ENODEV;
 	}
-	if (!(mrp->flags & MRPF_VALID)) {
+	if ((mrp->flags & MRPF_VALID) == 0) {
 		return -ENODEV;
 	}
 	if (MAJOR(inode->i_rdev) & 0x40) {
@@ -338,7 +366,7 @@ int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 		if (mrp->flags & MRPF_RESET) {
 			return -EIO;
 		}
-		if (nbytes > 0x3fff) {
+		if (nbytes >= MRP_MAX_PKT_SIZE) {
 			return -EINVAL;
 		}
 	} else if (mrp->flags & MRPF_CPOPEN) {
@@ -346,8 +374,19 @@ int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 	}
 
 	rc = verify_area(VERIFY_WRITE, buf, nbytes);
-
-	/* TODO */
+	if (rc != 0)
+		return rc;
+	
+	unsigned char *ptr;
+	ptr = &mrp->recvring.buf;
+	unsigned counter = 0;
+	do {
+		if (counter >= nbytes) {
+			mrp->regs->ier |= MRP_STATF_CPR;
+			return counter;
+		}
+		/* TODO */
+	}
 	return -1;
 }
 
@@ -359,7 +398,48 @@ int mrp_write(struct inode *inode, struct file *file, const char *buf, int len)
 
 int mrp_select(struct inode *inode, struct file *file, int sel_type, select_table *wait)
 {
-	// TODO
+	int index, major;
+	struct mrp_unit *mrp;
+
+	major = MAJOR(inode->i_rdev);
+	index = major & 3;
+
+	if (index > 3) {
+		return 0;
+	}
+	
+	mrp = &mrp_units[index];
+
+	if (major & 0x40) {
+		switch (sel_type) {
+		case SEL_IN:
+			if (mrp->recvring.count > 0) {
+				return 1;
+			}
+			select_wait(&mrp->wake_queue1, wait);
+			break;
+		case SEL_OUT:
+			if (mrp->sendring.count <= (RINGBUF_SIZE - 2)) {
+				return 1;
+			}
+			select_wait(&mrp->wake_queue2, wait);
+			break;
+		}
+	} else {
+		if (sel_type == SEL_IN) {
+			if (mrp->flags & (MRPF_RDONE | MRPF_REQTAG)) {
+				return 1;
+			}
+			select_wait(&mrp->wake_queue4, wait);
+		}
+		if (sel_type == SEL_OUT) {
+			if ((mrp->flags & MRPF_SBUSY) == 0) {
+				return 1;
+			}
+			select_wait(&mrp->wake_queue3);
+		}
+	}
+	
 	return 0;
 }
 
@@ -402,7 +482,6 @@ int mrp_open(struct inode *inode, struct file *file)
 	mrp->flags = flags;
 	MOD_INC_USE_COUNT;
 
-	/* TODO */
 	return 0;
 }
 
@@ -437,8 +516,67 @@ void mrp_release(struct inode *inode, struct file *file)
 
 int mrp_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
 {
-	// TODO
-	return -1;
+	int index, major, rc;
+	struct mrp_unit *mrp;
+
+	major = MAJOR(inode->i_rdev);
+	index = major & 3;
+	mrp = &mrp_units[index];
+
+	mrp_printk(2, "mrp_ioctl: cmd=0x%x arg=0x%lx\n", cmd, arg);
+
+	if (index > 3) {
+		return -ENODEV;
+	}
+
+	if ((mrp->flags & MRPF_VALID) == 0) {
+		return -ENODEV;
+	}
+
+	if (MAJOR(inode->i_rdev) & 0x40) {
+		if (mrp->flags & MRPF_CPOPEN) {
+			return -ENODEV;
+		}
+		if (cmd != MRP_IOCTL_GT) {
+			return -EINVAL;
+		}
+	}
+
+	switch (cmd) {
+	case MRP_IOCTL_RF:
+		cli();
+		mrp->rlen = 0;
+		mrp->regs->ier |= MRP_STATF_RECV;
+		mrp->flags &= ~MRPF_RDONE;
+		sti();
+		break;
+	case MRP_IOCTL_GT:
+		unsigned int thingy = MRP_IOCTL_DECI;
+		copy_to_user(arg, &thingy, sizeof(thing));
+		break;
+	case MRP_IOCTL_SF:
+		cli();
+		mrp->slen = 0;
+		mrp->regs->ier &= ~MRP_STATF_WAKE;
+		mrp->flags &= ~MRPF_SBUSY;
+		sti();
+		break;
+	case MRP_IOCTL_SY:
+		cli();
+		while (mrp->flags & MRPF_SBUSY) {
+			if (file->f_flags & O_NONBLOCK) {
+				return -EWOULDBLOCK;
+			}
+			interruptible_sleep_on(&mrp->wake_queue3);
+			if (current->signal & ~current->blocked) {
+				return -EINTR;
+			}
+		}
+		sti();
+		break;
+	}
+	
+	return 0;
 }
 
 int mrp_get_info(char *buffer, char **start, off_t offset, int length, int dummy)

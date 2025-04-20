@@ -14,6 +14,12 @@
 		printk(fmt, ##arg);	\
 	}
 
+#define MRP_IOCTL_GT	(0xa14c4754)
+#define MRP_IOCTL_RF	(0xa14c5246)
+#define MRP_IOCTL_SF	(0xa14c5346)
+#define MRP_IOCTL_SY	(0xa14c5359)
+#define MRP_IOCTL_DECI	(0xa14c4126)
+
 extern int mrp_debug;
 
 struct base2 {
