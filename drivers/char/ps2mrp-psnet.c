@@ -177,7 +177,7 @@ int mrp_reset(struct mrp_unit *mrp)
 	unsigned long flags;
 	volatile struct mrpregs *regs = mrp->regs;
 
-	// note: on smp kernels, we should use lock_kernel/unlock_kernel instead of cli/save_flags/restore_flags
+	// note: on smp kernels, we should use lock_kernel/unlock_kernel instead of save_flags/cli/restore_flags
 
 	mrp_printk(2, "mrp_reset:\n");
 
@@ -392,7 +392,7 @@ int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 
 int mrp_write(struct inode *inode, struct file *file, const char *buf, int len)
 {
-	// TODO
+	/* TODO */
 	return 0;
 }
 
