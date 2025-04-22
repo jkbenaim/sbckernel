@@ -360,7 +360,7 @@ int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 		return -ENODEV;
 	}
 	if (MAJOR(inode->i_rdev) & 0x40) {
-		if (!(mrp->flags & MRPF_OPENED)) {
+		if ((mrp->flags & MRPF_OPENED) == 0) {
 			return -ENODEV;
 		}
 		if (mrp->flags & MRPF_RESET) {
@@ -370,20 +370,40 @@ int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 			return -EINVAL;
 		}
 	} else if (mrp->flags & MRPF_CPOPEN) {
+		/* not a regular inode major, and not CPOPEN'd */
 		return -ENODEV;
 	}
+
+	cli();
 
 	rc = verify_area(VERIFY_WRITE, buf, nbytes);
 	if (rc != 0)
 		return rc;
 	
+	/* 0x8000bc5 */
 	unsigned char *ptr;
 	ptr = &mrp->recvring.buf;
 	unsigned counter = 0;
 	do {
+		/* top of loop at loc_8000c63 */
 		if (counter >= nbytes) {
 			mrp->regs->ier |= MRP_STATF_CPR;
 			return counter;
+		}
+		/* loc_8000bd8 */
+		if (mrp->recvring.count == 0) {
+			if (file.f_flags & O_NONBLOCK) {
+				/* loc_8000d9c */
+				return -EWOULDBLOCK;
+			}
+			/* 8000dce */
+			interruptible_sleep_on(&mrp->wake_queue4);
+			if (current->signal & ~current->blocked) {
+				/* loc_8000dac */
+				sti();
+				return -EINTR;
+			}
+			ptr = &mrp->recvring.buf;
 		}
 		/* TODO */
 	}
