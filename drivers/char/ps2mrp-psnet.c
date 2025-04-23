@@ -346,7 +346,7 @@ void mrp_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 {
 	struct mrp_unit *mrp;
-	int index, rc;
+	int counter, index, rc;
 
 	index = MAJOR(inode->i_rdev) & 3;
 	mrp = &mrp_units[index];
@@ -370,7 +370,8 @@ int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 			return -EINVAL;
 		}
 	} else if (mrp->flags & MRPF_CPOPEN) {
-		/* not a regular inode major, and not CPOPEN'd */
+		/* not a regular inode major, and not CPOPEN'd. */
+		/* this is the red path in IDA. */
 		return -ENODEV;
 	}
 
@@ -381,33 +382,24 @@ int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 		return rc;
 	
 	/* 0x8000bc5 */
-	unsigned char *ptr;
-	ptr = &mrp->recvring.buf;
-	unsigned counter = 0;
-	do {
+	for (counter = 0; counter < nbytes; counter++) {
 		/* top of loop at loc_8000c63 */
-		if (counter >= nbytes) {
-			mrp->regs->ier |= MRP_STATF_CPR;
-			return counter;
-		}
 		/* loc_8000bd8 */
-		if (mrp->recvring.count == 0) {
-			if (file.f_flags & O_NONBLOCK) {
-				/* loc_8000d9c */
+		while (mrp->recvring.count == 0) {
+			/* 8000be5 */
+			if (file->f_flags & O_NONBLOCK) {
 				return -EWOULDBLOCK;
 			}
-			/* 8000dce */
-			interruptible_sleep_on(&mrp->wake_queue4);
+			interruptible_sleep_on(&mrp->wake_queue1);
 			if (current->signal & ~current->blocked) {
-				/* loc_8000dac */
-				sti();
 				return -EINTR;
 			}
-			ptr = &mrp->recvring.buf;
 		}
-		/* TODO */
+		*buf++ = ringbuf_get(&mrp->recvring);
 	}
-	return -1;
+	/* 8000c71 */
+	mrp->regs->ier |= MRP_STATF_CPR;
+	return counter;
 }
 
 int mrp_write(struct inode *inode, struct file *file, const char *buf, int len)
@@ -456,7 +448,7 @@ int mrp_select(struct inode *inode, struct file *file, int sel_type, select_tabl
 			if ((mrp->flags & MRPF_SBUSY) == 0) {
 				return 1;
 			}
-			select_wait(&mrp->wake_queue3);
+			select_wait(&mrp->wake_queue3, wait);
 		}
 	}
 	
@@ -536,7 +528,7 @@ void mrp_release(struct inode *inode, struct file *file)
 
 int mrp_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
 {
-	int index, major, rc;
+	int index, major;
 	struct mrp_unit *mrp;
 
 	major = MAJOR(inode->i_rdev);
@@ -571,8 +563,10 @@ int mrp_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned
 		sti();
 		break;
 	case MRP_IOCTL_GT:
-		unsigned int thingy = MRP_IOCTL_DECI;
-		copy_to_user(arg, &thingy, sizeof(thing));
+		{
+			unsigned int thingy = MRP_IOCTL_DECI;
+			copy_to_user((void *)arg, &thingy, sizeof(thingy));
+		}
 		break;
 	case MRP_IOCTL_SF:
 		cli();
