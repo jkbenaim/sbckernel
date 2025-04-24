@@ -406,9 +406,162 @@ static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbyte
 
 static int mrp_write(struct inode *inode, struct file *file, const char *buf, int len)
 {
-	/* TODO */
-	printk("mrp: mrp_write not implemented\n");
-	return 0;
+	int index, major, rc;
+	struct mrp_unit *mrp;
+	struct decihdr_s hdr;
+
+	major = MAJOR(inode->i_rdev);
+	index = major & 3;
+
+	mrp_printk(2, "mrp_write: count=%d\n", len);
+
+	if (index > 3) {
+		return -ENODEV;
+	}
+	mrp = &mrp_units[index];
+
+	if ((mrp->flags & MRPF_VALID) == 0) {
+		return -ENODEV;
+	}
+
+	if ((major & 0x40) == 0) {
+		int bytes_done;
+		/* special control plane case */
+		if ((mrp->flags & MRPF_CPOPEN) == 0) {
+			return -ENODEV;
+		}
+		rc = verify_area(VERIFY_READ, buf, len);
+		if (rc != 0) {
+			return rc;
+		}
+		cli();
+		if (0 >= len) {
+			mrp_cps(mrp);
+			sti();
+			return 0;
+		}
+		/* loc_8000f4c */
+		for (bytes_done = 0; bytes_done < len; bytes_done++) {
+			while (mrp->sendring.count > 0xfff) {
+				/* loc_8000f5c */
+				if (file->f_flags & O_NONBLOCK) {
+					sti();
+					return -EWOULDBLOCK;
+				}
+				/* 8000f6a */
+				interruptible_sleep_on(&mrp->wake_queue2);
+				if (current->signal & ~current->blocked) {
+					sti();
+					return -EINTR;
+				}
+			}
+			/* loc_8000f9f */
+			ringbuf_put(mrp->recvbuf, *buf++);
+		}
+
+		/* loc_8000fd6 */
+		mrp_cps(mrp);
+		sti();
+		return len;
+	}
+
+	/* normal case */
+	if ((mrp->flags & MRPF_OPENED) == 0) {
+		return -ENODEV;
+	}
+	if (len < sizeof(hdr)) {
+		return -EINVAL;
+	}
+	if (len > 0x4000) {
+		return -EINVAL;
+	}
+	rc = verify_area(VERIFY_READ, buf, len);
+	if (rc != 0) {
+		return rc;
+	}
+	/* 8001037 */
+	memcpy(&hdr, buf, sizeof(hdr));
+	if (hdr.magic != DECI_MAGIC) {
+		return -EINVAL;
+	}
+	if (len != hdr.size) {
+		return -EINVAL;
+	}
+	if (hdr.cksum != deci_cksum((unsigned int *) &hdr)) {
+		return -EINVAL;
+	}
+
+	if (hdr.req == REQ_TRESET) {
+		void *buffy = NULL;
+		struct decihdr_s *hdr2 = (struct decihdr_s *) buf;
+		unsigned reset_mode = 0;
+		if (len >= 0x24) {
+			reset_mode = (hdr2->data[0] >> 4) & 0xf;
+		}
+		cli();
+		switch (reset_mode) {
+		case 0:
+			if (mrp->buf40) {
+				kfree(mrp->buf40);
+			}
+			mrp->buf40 = kmalloc(len, GFP_KERNEL);
+			if (!mrp->buf40) {
+				sti();
+				return -ENOMEM;
+			}
+			mrp->nbytes40 = len;
+			buffy = mrp->buf40;
+			break;
+		case 1:
+			if (mrp->buf38) {
+				kfree(mrp->buf38);
+			}
+			mrp->buf38 = kmalloc(len, GFP_KERNEL);
+			if (!mrp->buf38) {
+				sti();
+				return -ENOMEM;
+			}
+			mrp->nbytes38 = len;
+			buffy = mrp->buf38;
+			break;
+		case 2:
+		default:
+			break;
+		}
+		if (reset_mode == 0) {
+			mrp_reset(mrp);
+		}
+		mrp->deci_tag_for_reset = hdr.tag;
+		if (hdr.tag) {
+			mrp->flags |= MRPF_REQTAG;
+			wake_up(&mrp->wake_queue4);
+		}
+		sti();
+		return len;
+	}
+	
+	if ((mrp->flags & MRPF_RESET) == 0) {
+		return -EIO;
+	}
+
+	cli();
+	while (mrp->flags & MRPF_SBUSY) {
+		if (file->f_flags & O_NONBLOCK) {
+			sti();
+			return -EWOULDBLOCK;
+		}
+		interruptible_sleep_on(&mrp->wake_queue3);
+		if (current->signal & ~current->blocked) {
+			sti();
+			return -EINTR;
+		}
+	}
+	memcpy(mrp->sendbuf, buf, len);
+	mrp->deci_out = mrp->sendbuf;
+	mrp->slen = len;
+	mrp_send(mrp);
+	sti();
+	return len;
 }
 
 static int mrp_select(struct inode *inode, struct file *file, int sel_type, select_table *wait)

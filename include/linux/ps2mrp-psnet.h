@@ -116,7 +116,7 @@ struct mrp_unit {
 	int nbytes38;
 	void *buf40;
 	int nbytes40;
-	int int48;
+	int deci_tag_for_reset;
 	struct ringbuf_s sendring;
 	struct ringbuf_s recvring;
 	struct wait_queue *wake_queue1;
@@ -138,9 +138,11 @@ struct decihdr_s {
 	unsigned short seq;
 	unsigned int req;
 	unsigned int cksum;
+	unsigned int data[0];
 } __attribute__((packed));
 
 #define DECI_MAGIC (0xa14c)
+#define REQ_TRESET (0x54010000)
 
 static inline unsigned int
 deci_cksum(unsigned int *hdr)
