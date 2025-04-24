@@ -19,8 +19,9 @@
  *
  */
 
-int mrp_debug = 1;
+int mrp_debug = 99;
 
+#ifdef CONFIG_PROC_FS
 static struct proc_dir_entry mrp_proc_de = {
 	0, 3, "mrp",
 	S_IFREG | S_IRUSR | S_IRGRP| S_IROTH,
@@ -28,6 +29,7 @@ static struct proc_dir_entry mrp_proc_de = {
 	NULL,
 	mrp_get_info
 };
+#endif /* PROC_FS */
 
 static struct file_operations mrp_fops = {
 	.read		= mrp_read,
@@ -38,7 +40,7 @@ static struct file_operations mrp_fops = {
 	.release	= mrp_release
 };
 
-unsigned int mrp_major = 0;
+static unsigned int mrp_major = 0;
 
 /*
  * .bss
@@ -80,7 +82,7 @@ static inline unsigned long copy_to_user(void *to, const void *from, unsigned lo
 }
 #endif
 
-void mrp_dump_regs(struct mrp_unit *mrp)
+static void mrp_dump_regs(struct mrp_unit *mrp)
 {
 	typeof(mrp->regs) regs = mrp->regs;
 	if (mrp_debug >= 3) {
@@ -106,14 +108,14 @@ void mrp_dump_regs(struct mrp_unit *mrp)
 	}
 }
 
-int mrp_send(struct mrp_unit *mrp)
+static int mrp_send(struct mrp_unit *mrp)
 {
 	mrp_printk(2, "mrp_send: slen=%d\n", mrp->slen);
 
 	return mrp_put_fifo(mrp, mrp->deci_out, mrp->slen);
 }
 
-int mrp_recv(struct mrp_unit *mrp)
+static int mrp_recv(struct mrp_unit *mrp)
 {
 	__label__ out_error;
 	struct decihdr_s *hdr;
@@ -172,7 +174,7 @@ out_error:
 	return -1;
 }
 
-int mrp_reset(struct mrp_unit *mrp)
+static int mrp_reset(struct mrp_unit *mrp)
 {
 	unsigned long flags;
 	volatile struct mrpregs *regs = mrp->regs;
@@ -194,7 +196,7 @@ int mrp_reset(struct mrp_unit *mrp)
 	regs->csi = 7;
 	regs->rst = 0;
 	udelay(20);
-	regs->ier = 0x15;
+	regs->ier = MRP_STATF_CPR | MRP_STATF_BOOTP | MRP_STATF_RECV;
 	{
 		unsigned short tmp;
 		tmp = mrp->flags;
@@ -218,7 +220,7 @@ int mrp_reset(struct mrp_unit *mrp)
 	return 0;
 }
 
-int mrp_bootp(struct mrp_unit *mrp)
+static int mrp_bootp(struct mrp_unit *mrp)
 {
 	unsigned short cpr = mrp->regs->cpr;
 
@@ -251,7 +253,7 @@ int mrp_bootp(struct mrp_unit *mrp)
 	return 0;
 }
 
-void mrp_cpr(struct mrp_unit *mrp)
+static void mrp_cpr(struct mrp_unit *mrp)
 {
 	if (mrp->recvring.count <= 0xfff) {
 		ringbuf_put(&mrp->recvring, mrp->regs->cpr);
@@ -262,7 +264,7 @@ void mrp_cpr(struct mrp_unit *mrp)
 	}
 }
 
-void mrp_cps(struct mrp_unit *mrp)
+static void mrp_cps(struct mrp_unit *mrp)
 {
 	if (mrp->flags & MRPF_CPBUSY) {
 		if (mrp->sendring.count > 0) {
@@ -275,7 +277,7 @@ void mrp_cps(struct mrp_unit *mrp)
 	}
 }
 
-void mrp_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	unsigned long flags;
 	unsigned short stat;
@@ -343,7 +345,7 @@ void mrp_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 	restore_flags(flags);
 }
 
-int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
+static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 {
 	struct mrp_unit *mrp;
 	int counter, index, rc;
@@ -371,9 +373,9 @@ int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 		}
 	} else if (mrp->flags & MRPF_CPOPEN) {
 		/* not a regular inode major, and not CPOPEN'd. */
-		/* this is the red path in IDA. */
 		return -ENODEV;
 	}
+
 
 	cli();
 
@@ -402,13 +404,14 @@ int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 	return counter;
 }
 
-int mrp_write(struct inode *inode, struct file *file, const char *buf, int len)
+static int mrp_write(struct inode *inode, struct file *file, const char *buf, int len)
 {
 	/* TODO */
+	printk("mrp: mrp_write not implemented\n");
 	return 0;
 }
 
-int mrp_select(struct inode *inode, struct file *file, int sel_type, select_table *wait)
+static int mrp_select(struct inode *inode, struct file *file, int sel_type, select_table *wait)
 {
 	int index, major;
 	struct mrp_unit *mrp;
@@ -455,7 +458,7 @@ int mrp_select(struct inode *inode, struct file *file, int sel_type, select_tabl
 	return 0;
 }
 
-int mrp_open(struct inode *inode, struct file *file)
+static int mrp_open(struct inode *inode, struct file *file)
 {
 	int bid, flags, index, major;
 	struct mrp_unit *mrp;
@@ -497,7 +500,7 @@ int mrp_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-void mrp_release(struct inode *inode, struct file *file)
+static void mrp_release(struct inode *inode, struct file *file)
 {
 	int index, major;
 	int flags;
@@ -526,7 +529,7 @@ void mrp_release(struct inode *inode, struct file *file)
 	MOD_DEC_USE_COUNT;
 }
 
-int mrp_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
+static int mrp_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
 {
 	int index, major;
 	struct mrp_unit *mrp;
@@ -593,71 +596,83 @@ int mrp_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned
 	return 0;
 }
 
-int mrp_get_info(char *buffer, char **start, off_t offset, int length, int dummy)
+#ifdef CONFIG_PROC_FS
+static int mrp_get_info(char *buffer, char **start, off_t offset, int length, int dummy)
 {
-	int index, size;
+	int index, len = 0;
+#define cat(fmt, arg...) len += sprintf(buffer+len, fmt, ##arg);
 
-	size = sprintf(buffer, "DECI1 $Revision: 3.10 $ %s %s\n", MRP_PSNET_BUILDDATE, MRP_PSNET_BUILDTIME);
+	cat("DECI1 $Revision: 3.10 $ %s %s\n", MRP_PSNET_BUILDDATE, MRP_PSNET_BUILDTIME);
 	for (index = 0; index < MRP_UNIT_MAX; index++) {
-		struct mrp_unit *mrp = &mrp_units[index];
-		typeof(mrp->regs) regs = mrp->regs;
-		size += sprintf(buffer, "unit%d", index);
+		struct mrp_unit *mrp;
+		typeof(mrp->regs) regs;
+		
+		cli();
+		
+		mrp = &mrp_units[index];
+		regs = mrp->regs;
+		
+		cat("unit%d", index);
 		if (mrp->flags & MRPF_DETECT) {
-			size += sprintf(buffer, " DETECT");
+			cat(" DETECT");
 		}
 		if (mrp->flags & MRPF_VALID) {
-			size += sprintf(buffer, " VALID");
+			cat(" VALID");
 		}
 		if (mrp->flags & MRPF_RESET) {
-			size += sprintf(buffer, " RESET");
+			cat(" RESET");
 		}
 		if (mrp->flags & MRPF_OPENED) {
-			size += sprintf(buffer, " OPENED");
+			cat(" OPENED");
 		}
 		if (mrp->flags & MRPF_SBUSY) {
-			size += sprintf(buffer, " SBUSY");
+			cat(" SBUSY");
 		}
 		if (mrp->flags & MRPF_RDONE) {
-			size += sprintf(buffer, " RDONE");
+			cat(" RDONE");
 		}
 		if (mrp->flags & MRPF_REQTAG) {
-			size += sprintf(buffer, " REQTAG");
+			cat(" REQTAG");
 		}
 		if (mrp->flags & MRPF_CPOPEN) {
-			size += sprintf(buffer, " CPOPEN");
+			cat(" CPOPEN");
 		}
 		if (mrp->flags & MRPF_CPBUSY) {
-			size += sprintf(buffer, " CPBUSY");
+			cat(" CPBUSY");
 		}
 
-		size += sprintf(buffer, " nintr=%d", mrp->nintr);
-		size += sprintf(buffer, "\n");
+		cat(" nintr=%d", mrp->nintr);
+		cat("\n");
 
 		if (mrp->flags & MRPF_VALID) {
-			size += sprintf(buffer, " BID=%04x", regs->bid);
-			size += sprintf(buffer, " RST=%04x", regs->bid);
-			size += sprintf(buffer, " CPS=%04x", regs->bid);
-			size += sprintf(buffer, " CPR=%04x", regs->bid);
-			size += sprintf(buffer, " FST=%04x", regs->bid);
-			size += sprintf(buffer, " TXC=%04x", regs->bid);
-			size += sprintf(buffer, " RXC=%04x", regs->bid);
-			size += sprintf(buffer, " F1C=%04x\n", regs->bid);
-			size += sprintf(buffer, " IST=%04x", regs->bid);
-			size += sprintf(buffer, " ISP=%04x", regs->bid);
-			size += sprintf(buffer, " IER=%04x", regs->bid);
-			size += sprintf(buffer, " CSI=%04x", regs->bid);
-			size += sprintf(buffer, " FSI=%04x", regs->bid);
-			size += sprintf(buffer, " AEO=%04x", regs->bid);
-			size += sprintf(buffer, " AFO=%04x\n", regs->bid);
+			cat(" BID=%04x", regs->bid);
+			cat(" RST=%04x", regs->rst);
+			cat(" CPS=%04x", regs->cps);
+			cat(" CPR=%04x", regs->cpr);
+			cat(" FST=%04x", regs->fst);
+			cat(" TXC=%04x", regs->txc);
+			cat(" RXC=%04x", regs->rxc);
+			cat(" F1C=%04x\n", regs->f1c);
+			cat(" IST=%04x", regs->ist);
+			cat(" ISP=%04x", regs->isp);
+			cat(" IER=%04x", regs->ier);
+			cat(" CSI=%04x", regs->csi);
+			cat(" FSI=%04x", regs->fsi);
+			cat(" AEO=%04x", regs->aeo);
+			cat(" AFO=%04x\n", regs->afo);
 		}
+		sti();
 	}
-	
-	return size;
-}
 
-int mrp_base(unsigned char bus, unsigned char dev_fn, unsigned char where)
+	return len;
+#undef cat
+}
+#endif /* PROC_FS */
+
+static int mrp_base(unsigned char bus, unsigned char dev_fn, unsigned char where)
 {
-	int address, base;
+	int base;
+	int address;
 
 	base = (where - 0x10) >> 2;
 	if (pcibios_read_config_dword(bus, dev_fn, where, &address)) {
@@ -668,10 +683,11 @@ int mrp_base(unsigned char bus, unsigned char dev_fn, unsigned char where)
 		printk("mrp: unsupported address type (BASE%d=0x%x)\n", base, address);
 		return 0;
 	}
-	return address & 0xf0;
+	address &= ~0xf;
+	return address;
 }
 
-void *mrp_remap(unsigned int base)
+static void *mrp_remap(unsigned int base)
 {
 	void *rc;
 	if (MAP_NR(base) < MAP_NR(high_memory)) {
@@ -684,12 +700,13 @@ void *mrp_remap(unsigned int base)
 		printk("mrp: can't vremap (base=0x%x)\n", base);
 		return NULL;
 	}
-	return (base & PAGE_MASK) + rc;
+	rc = (base & ~PAGE_MASK) + rc;
+	return rc;
 }
 
 int mrp_init(void)
 {
-	int index = 0;
+	unsigned short index = 0;
 	int boards_found = 0;
 	int iRc;
 
@@ -703,6 +720,9 @@ int mrp_init(void)
 		int base0, base2, base3;
 		unsigned char pci_bus, pci_device_fn, pci_irq_line;
 		void *rc;
+
+		pci_bus = pci_device_fn = pci_irq_line = 69u;
+
 		if (pcibios_find_device(PCI_VENDOR_ID_SONY,
 					PCI_DEVICE_ID_SONY_PS2_MRP,
 					index, &pci_bus,
@@ -750,7 +770,10 @@ int mrp_init(void)
 	mrp_major = iRc;
 	printk("mrp: registered character major %d\n", iRc);
 
+#ifdef CONFIG_PROC_FS
 	proc_register_dynamic(&proc_root, &mrp_proc_de);
+#endif /* PROC_FS */
+
 	for (index = 0; index < 4; index++) {
 		void *rc;
 		struct mrp_unit *mrp = &mrp_units[index];
@@ -833,6 +856,8 @@ void cleanup_module(void)
 	}
 	unregister_chrdev(mrp_major, "mrp");
 	printk("mrp: unregistered character major %d\n", mrp_major);
+#ifdef CONFIG_PROC_FS
 	proc_unregister(&proc_root, mrp_proc_de.low_ino);
+#endif /* PROC_FS */
 }
 #endif

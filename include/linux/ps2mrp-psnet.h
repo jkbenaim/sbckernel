@@ -334,36 +334,36 @@ mrp_get_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nbytes)
 	mrp->regs->rxc = 1;
 }
 
-extern int mrp_get_info(
+static int mrp_get_info(
 	char *buffer,
 	char **start,
 	off_t offset,
 	int length,
 	int dummy);
-extern int mrp_read(
+static int mrp_read(
 	struct inode *inode,
 	struct file *file,
 	char *buf,
 	int len);
-extern int mrp_write(
+static int mrp_write(
 	struct inode *inode,
 	struct file *file,
 	const char *buf,
 	int len);
-extern int mrp_select(
+static int mrp_select(
 	struct inode *inode,
 	struct file *file,
 	int sel_type,
 	select_table *wait);
-extern int mrp_ioctl(
+static int mrp_ioctl(
 	struct inode *inode,
 	struct file *file,
 	unsigned int cmd,
 	unsigned long arg);
-extern int mrp_open(
+static int mrp_open(
 	struct inode *inode,
 	struct file *file);
-extern void mrp_release(
+static void mrp_release(
 	struct inode *inode,
 	struct file *file);
 #endif
