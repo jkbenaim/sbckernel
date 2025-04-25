@@ -265,9 +265,9 @@ enum mrp_cpr_flags {
 static inline unsigned
 mrp_put_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nbytes)
 {
+	unsigned nw = (nbytes + 3) >> 2;
 	volatile struct base2 *base2 = mrp->base2;
 	unsigned loops = 0;
-	unsigned nw = (nbytes + 3) >> 2;
 	
 	mrp_printk(3, "mrp_put_fifo: nw=%d\n", nw);
 	
@@ -304,9 +304,9 @@ mrp_put_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nbytes)
 static inline void
 mrp_get_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nbytes)
 {
-	volatile struct base2 *base2 = mrp->base2;
-	unsigned loops = 0;
 	unsigned nw = (nbytes + 3) >> 2;
+	volatile struct base2 *base2 = mrp->base2;
+	unsigned loops = nw >> 3;
 	
 	mrp_printk(3, "mrp_get_fifo: nw=%d\n", nw);
 
@@ -319,7 +319,7 @@ mrp_get_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nbytes)
 	case 2: *buf++ = base2->fifoport;
 	case 1: *buf++ = base2->fifoport;
 	default:
-	case 0: loops = nw >> 3;
+	case 0: /* loops = nw >> 3; */
 	}
 	while (loops) {
 		buf[0] = base2->fifoport;
@@ -333,7 +333,7 @@ mrp_get_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nbytes)
 		buf += 8;
 		loops--;
 	}
-	mrp->regs->rxc = 1;
+	/* mrp->regs->rxc = 1; */
 }
 
 static int mrp_get_info(
