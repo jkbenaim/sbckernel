@@ -84,9 +84,8 @@ static inline unsigned long copy_to_user(void *to, const void *from, unsigned lo
 }
 #endif
 
-static void mrp_dump_regs(struct mrp_unit *mrp)
+static void mrp_dump_regs(struct mrpregs *regs)
 {
-	typeof(mrp->regs) regs = mrp->regs;
 	if (mrp_debug >= 3) {
 		printk("* BID=%04x RST=%04x CPS=%04x CPR=%04x\n",
 			regs->bid,
@@ -309,7 +308,7 @@ static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 	stat = mrp->regs->ist & mrp->regs->ier;
 	if (mrp_debug >= 2) {
 		mrp_printk(2, "mrp_interrupt: stat=0x%04x\n", stat);
-		mrp_dump_regs(mrp);
+		mrp_dump_regs(mrp->regs);
 	}
 
 	if (stat & (MRP_STATF_RECV | MRP_STATF_WAKE)) {
