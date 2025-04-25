@@ -127,35 +127,41 @@ static int mrp_recv(struct mrp_unit *mrp)
 	}
 	if (mrp->regs->fst & MRP_FSTF_0001) {
 		mrp_printk(1, "mrp_recv: invalid fifo status (%04x)\n", mrp->regs->fst);
+		mrp->regs->rxc = 1;
 		goto out_error;
 	}
 
 	do {
+		unsigned short fst;
 		mrp->deci_in = hdr = (struct decihdr_s *) mrp->recvbuf;	// woof!
 
 		mrp_get_fifo(mrp, mrp->recvbuf, 4);
-		if (!(mrp->regs->fst & MRP_FSTF_0010)) {
-			mrp_printk(1, "mrp_recv: invalid fifo status (%04x)\n", mrp->regs->fst);
-			goto out_error;
-		}
+		fst = mrp->regs->fst;
+		if ((fst & MRP_FSTF_0010) == 0) {
+			mrp->rlen = hdr->size;
+			mrp->deci_in += 4;
 
-		mrp->rlen = hdr->size;
-		mrp->deci_in += 4;
-
-		if ( (hdr->magic != DECI_MAGIC) || (hdr->size > MRP_MAX_PKT_SIZE) ) {
-			if (mrp->regs->fst & MRP_FSTF_0001) {
-				mrp_printk(1, "mrp_recv: bad mag/len (%04x/%04x)\n",
+			if ( (hdr->magic != DECI_MAGIC) || (hdr->size > MRP_MAX_PKT_SIZE) ) {
+				if ((fst & MRP_FSTF_0001) != 0) {
+					mrp_printk(1, "mrp_recv: bad mag/len (%04x/%04x)\n",
+						hdr->magic,
+						hdr->size
+					);
+					mrp->regs->rxc = 1;
+					goto out_error;
+				}
+				mrp_printk(1, "mrp_recv: rescanning (%04x/%04x)\n",
 					hdr->magic,
 					hdr->size
 				);
-				goto out_error;
 			}
-			mrp_printk(1, "mrp_recv: rescanning (%04x/%04x)\n",
-				hdr->magic,
-				hdr->size
-			);
+		} else {
+			/* (fst & MRP_FSTF_0010) != 0 */
+			mrp_printk(1, "mrp_recv: invalid fifo status (%04x)\n", fst);
+			mrp->regs->rxc = 1;
+			goto out_error;
 		}
-	} while ( (hdr->magic != DECI_MAGIC) || (hdr->size > MRP_MAX_PKT_SIZE) );
+	} while ( (hdr->magic != DECI_MAGIC) || ((hdr->size - sizeof(*hdr)) > (MRP_MAX_PKT_SIZE - sizeof(*hdr))) );
 
 	mrp_get_fifo(mrp, mrp->deci_in, mrp->rlen - 4);
 	if (hdr->cksum == deci_cksum((unsigned int *) hdr)) {
@@ -170,7 +176,6 @@ static int mrp_recv(struct mrp_unit *mrp)
 	return 1;
 
 out_error:
-	mrp->regs->rxc = 1;
 	mrp->regs->ier |= MRP_STATF_RECV;
 	return -1;
 }
