@@ -14,6 +14,8 @@
 #include <linux/proc_fs.h>
 #include <linux/ps2mrp-psnet.h>
 
+#define MRP_NOMATCHING
+
 /*
  * .data
  *
@@ -348,9 +350,10 @@ static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 {
 	struct mrp_unit *mrp;
-	int counter, index, rc;
+	int counter, index, minor, rc;
 
-	index = MAJOR(inode->i_rdev) & 3;
+	minor = MINOR(inode->i_rdev);
+	index = minor & 3;
 	mrp = &mrp_units[index];
 
 	mrp_printk(2, "mrp_read: count=%d\n", nbytes);
@@ -361,7 +364,7 @@ static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbyte
 	if ((mrp->flags & MRPF_VALID) == 0) {
 		return -ENODEV;
 	}
-	if (MAJOR(inode->i_rdev) & 0x40) {
+	if (minor & 0x40) {
 		if ((mrp->flags & MRPF_OPENED) == 0) {
 			return -ENODEV;
 		}
@@ -372,7 +375,7 @@ static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbyte
 			return -EINVAL;
 		}
 	} else if (mrp->flags & MRPF_CPOPEN) {
-		/* not a regular inode major, and not CPOPEN'd. */
+		/* not a regular inode minor, and not CPOPEN'd. */
 		return -ENODEV;
 	}
 
@@ -406,12 +409,12 @@ static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbyte
 
 static int mrp_write(struct inode *inode, struct file *file, const char *buf, int len)
 {
-	int index, major, rc;
+	int index, minor, rc;
 	struct mrp_unit *mrp;
 	struct decihdr_s hdr;
 
-	major = MAJOR(inode->i_rdev);
-	index = major & 3;
+	minor = MINOR(inode->i_rdev);
+	index = minor & 3;
 
 	mrp_printk(2, "mrp_write: count=%d\n", len);
 
@@ -424,7 +427,7 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 		return -ENODEV;
 	}
 
-	if ((major & 0x40) == 0) {
+	if ((minor & 0x40) == 0) {
 		int bytes_done;
 		/* special control plane case */
 		if ((mrp->flags & MRPF_CPOPEN) == 0) {
@@ -566,11 +569,11 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 
 static int mrp_select(struct inode *inode, struct file *file, int sel_type, select_table *wait)
 {
-	int index, major;
+	int index, minor;
 	struct mrp_unit *mrp;
 
-	major = MAJOR(inode->i_rdev);
-	index = major & 3;
+	minor = MINOR(inode->i_rdev);
+	index = minor & 3;
 
 	if (index > 3) {
 		return 0;
@@ -578,7 +581,7 @@ static int mrp_select(struct inode *inode, struct file *file, int sel_type, sele
 	
 	mrp = &mrp_units[index];
 
-	if (major & 0x40) {
+	if (minor & 0x40) {
 		switch (sel_type) {
 		case SEL_IN:
 			if (mrp->recvring.count > 0) {
@@ -613,14 +616,18 @@ static int mrp_select(struct inode *inode, struct file *file, int sel_type, sele
 
 static int mrp_open(struct inode *inode, struct file *file)
 {
-	int bid, flags, index, major;
+	int bid, flags, index, minor;
 	struct mrp_unit *mrp;
 
-	major = MAJOR(inode->i_rdev);
-	index = major & 3;
+	minor = MINOR(inode->i_rdev);
+	index = minor & 3;
 	mrp = &mrp_units[index];
 
+#ifdef MRP_NOMATCHING
+	mrp_printk(2, "mrp_open: index=%d, minor=%d\n", index, minor);
+#else
 	mrp_printk(2, "mrp_open: index=%d\n", index);
+#endif
 
 	if (index > 3) {
 		return -ENODEV;
@@ -636,7 +643,7 @@ static int mrp_open(struct inode *inode, struct file *file)
 		return -EIO;
 	}
 
-	if (major & 0x40) {
+	if (minor & 0x40) {
 		if (flags & MRPF_CPOPEN) {
 			return -EBUSY;
 		}
@@ -655,11 +662,11 @@ static int mrp_open(struct inode *inode, struct file *file)
 
 static void mrp_release(struct inode *inode, struct file *file)
 {
-	int index, major;
+	int index, minor;
 	int flags;
 
-	major = MAJOR(inode->i_rdev);
-	index = major & 3;
+	minor = MINOR(inode->i_rdev);
+	index = minor & 3;
 	flags = mrp_units[index].flags;
 
 	mrp_printk(2, "mrp_release: index=%d\n", index);
@@ -671,7 +678,7 @@ static void mrp_release(struct inode *inode, struct file *file)
 	if (!(flags & MRPF_VALID)) {
 		return;
 	}
-	if (major & 0x40) {
+	if (minor & 0x40) {
 		if (flags & MRPF_OPENED) {
 			return;
 		}
@@ -684,11 +691,11 @@ static void mrp_release(struct inode *inode, struct file *file)
 
 static int mrp_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
 {
-	int index, major;
+	int index, minor;
 	struct mrp_unit *mrp;
 
-	major = MAJOR(inode->i_rdev);
-	index = major & 3;
+	minor = MINOR(inode->i_rdev);
+	index = minor & 3;
 	mrp = &mrp_units[index];
 
 	mrp_printk(2, "mrp_ioctl: cmd=0x%x arg=0x%lx\n", cmd, arg);
@@ -701,7 +708,7 @@ static int mrp_ioctl(struct inode *inode, struct file *file, unsigned int cmd, u
 		return -ENODEV;
 	}
 
-	if (MAJOR(inode->i_rdev) & 0x40) {
+	if (MINOR(inode->i_rdev) & 0x40) {
 		if (mrp->flags & MRPF_CPOPEN) {
 			return -ENODEV;
 		}
