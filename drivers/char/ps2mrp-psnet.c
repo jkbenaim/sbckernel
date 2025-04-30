@@ -14,8 +14,6 @@
 #include <linux/proc_fs.h>
 #include <linux/ps2mrp-psnet.h>
 
-#define MRP_NOMATCHING
-
 /*
  * .data
  *
@@ -26,11 +24,21 @@ int mrp_debug = 99;
 #ifdef CONFIG_PROC_FS
 static struct proc_dir_entry mrp_proc_de = {
 	0, 3, "mrp",
-	S_IFREG | S_IRUSR | S_IRGRP| S_IROTH,
+	S_IFREG | S_IRUSR | S_IRGRP | S_IROTH,
 	1, 0, 0, 0,
 	NULL,
 	mrp_get_info
 };
+#ifdef MRP_NOMATCHING
+static int mrp2_get_info(char *buffer, char **start, off_t offset, int length, int dummy);
+static struct proc_dir_entry mrp2_proc_de = {
+	0, 4, "mrp2",
+	S_IFREG | S_IRUSR | S_IRGRP | S_IROTH,
+	1, 0, 0, 0,
+	NULL,
+	mrp2_get_info
+};
+#endif /* MRP_NOMATCHING */
 #endif /* PROC_FS */
 
 static struct file_operations mrp_fops = {
@@ -283,21 +291,17 @@ static void mrp_cps(struct mrp_unit *mrp)
 	}
 }
 
-static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *pt_regs)
 {
 	unsigned long flags;
 	unsigned short stat;
 	int index;
 	struct mrp_unit *mrp;
+	struct mrpregs *regs;
 	mrp = (struct mrp_unit *) dev_id;
+	regs = mrp->regs;
 
-	index = (mrp - mrp_units) / sizeof(struct mrp_unit);
-
-	if (mrp < &mrp_units[0]) {
-		return;
-	}
-
-	if (mrp > &mrp_units[3]) {
+	if ((mrp < &mrp_units[0]) || (mrp >= &mrp_units[5])) {
 		return;
 	}
 
@@ -310,40 +314,45 @@ static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 	}
 
 	mrp->nintr++;
-	stat = mrp->regs->ist & mrp->regs->ier;
+	stat = regs->ist & regs->ier;
 	if (mrp_debug >= 2) {
 		mrp_printk(2, "mrp_interrupt: stat=0x%04x\n", stat);
-		mrp_dump_regs(mrp->regs);
+		mrp_dump_regs(regs);
 	}
 
-	if (stat & (MRP_STATF_RECV | MRP_STATF_WAKE)) {
+	if (((stat & MRP_STATF_RECV) == 0) && ((stat & MRP_STATF_WAKE) == 0)) {
 		if (stat & MRP_STATF_RESET) {
-			mrp->regs->rst &= (MRP_RESETF_2000 | MRP_RESETF_1000);
+			regs->rst &= (MRP_RESETF_2000 | MRP_RESETF_4000);
 			mrp_reset(mrp);
 		} else if (stat & MRP_STATF_BOOTP) {
-			mrp->regs->ier &= ~MRP_STATF_BOOTP;
+			regs->ier &= ~MRP_STATF_BOOTP;
 			mrp_bootp(mrp);
 		} else if (stat & MRP_STATF_CPR) {
-			mrp->regs->ier &= ~MRP_STATF_CPR;
+			regs->ier &= ~MRP_STATF_CPR;
 			mrp_cpr(mrp);
 		} else if (stat & MRP_STATF_CPS) {
-			mrp->regs->ier &= ~MRP_STATF_CPS;
-			mrp->regs->csi = 2;
+			regs->ier &= ~MRP_STATF_CPS;
+			regs->csi = 2;
 			mrp->flags &= ~MRPF_CPBUSY;
 			mrp_cps(mrp);
 			wake_up(&mrp->wake_queue2);
 		} else if (stat) {
+			index = 0;
+			if (mrp == &mrp_units[0]) index = 0;
+			if (mrp == &mrp_units[1]) index = 1;
+			if (mrp == &mrp_units[2]) index = 2;
+			if (mrp == &mrp_units[3]) index = 3;
 			printk("mrp%d: unexpected interrupt (stat=0x%x)\n", index, stat);
-			mrp->regs->ier = 0;
+			regs->ier = 0;
 		}
 	} else {
 		if (stat & MRP_STATF_WAKE) {
-			mrp->regs->ier &= ~MRP_STATF_WAKE;
+			regs->ier &= ~MRP_STATF_WAKE;
 			mrp->flags &= ~MRPF_SBUSY;
 			wake_up(&mrp->wake_queue3);
 		}
 		if (stat & MRP_STATF_RECV) {
-			mrp->regs->ier &= ~MRP_STATF_RECV;
+			regs->ier &= ~MRP_STATF_RECV;
 			mrp_recv(mrp);
 		}
 	}
@@ -831,6 +840,41 @@ static int mrp_get_info(char *buffer, char **start, off_t offset, int length, in
 	return len;
 #undef cat
 }
+
+#ifdef MRP_NOMATCHING
+static int mrp2_get_info(char *buffer, char **start, off_t offset, int length, int dummy)
+{
+	int index, len = 0;
+#define cat(fmt, arg...) len += sprintf(buffer+len, fmt, ##arg);
+#define ARRAY_SIZE(x) (sizeof(x)/sizeof(*x))
+
+	cat("DECI1 $Revision: 3.10 $ %s %s\n", MRP_PSNET_BUILDDATE, MRP_PSNET_BUILDTIME);
+	for (index = 0; index < MRP_UNIT_MAX; index++) {
+		int i;
+		struct mrp_unit *mrp;
+		
+		cli();
+
+		mrp = &mrp_units[index];
+		if (mrp->flags & MRPF_DETECT) {
+			cat("unit%d", index);
+			if (mrp->base4) {
+				cat("\tbase4=%p\n", mrp->base4);
+				for (i = 0; i < ARRAY_SIZE(mrp->base4->data); i++) {
+					cat("\t\tbase4 [%2d]=%8x\n", i, mrp->base4->data[i]);
+				}
+			} else {
+				cat("\tbase4 unmapped\n");
+			}
+		}
+		
+		sti();
+	}
+
+	return len;
+#undef cat
+}
+#endif /* MRP_NOMATCHING */
 #endif /* PROC_FS */
 
 static int mrp_base(unsigned char bus, unsigned char dev_fn, unsigned char where)
@@ -884,6 +928,9 @@ int mrp_init(void)
 		int base0, base2, base3;
 		unsigned char pci_bus, pci_device_fn, pci_irq_line;
 		void *rc;
+#ifdef MRP_NOMATCHING
+		int base4;
+#endif /* MRP_NOMATCHING */
 
 		pci_bus = pci_device_fn = pci_irq_line = 69u;
 
@@ -898,6 +945,12 @@ int mrp_init(void)
 		if (!base2) continue;
 		base3 = mrp_base(pci_bus, pci_device_fn, PCI_BASE_ADDRESS_3);
 		if (!base3) continue;
+#ifdef MRP_NOMATCHING
+		base4 = mrp_base(pci_bus, pci_device_fn, PCI_BASE_ADDRESS_4);
+		if (!base4) {
+			printk("mrp: unit%d: base4 couldn't be base'd\n", index);
+		}
+#endif /* MRP_NOMATCHING */
 
 		rc = mrp_remap(base0);
 		if (!rc) continue;
@@ -911,14 +964,30 @@ int mrp_init(void)
 		if (!rc) continue;
 		mrp_units[index].regs = rc;
 
+#ifdef MRP_NOMATCHING
+		if (base4) {
+			rc = mrp_remap(base4);
+			if (!rc) {
+				printk("mrp: unit%d: base4 couldn't be remap'd\n", index);
+			} else {
+				mrp_units[index].base4 = rc;
+			}
+		}
+#endif /* MRP_NOMATCHING */
+
 		if (pcibios_read_config_byte(pci_bus, pci_device_fn,
 					PCI_INTERRUPT_LINE, &pci_irq_line)) {
 			printk("mrp: can't read config (IRQ)\n");
 			continue;
 		}
 		mrp_units[index].irq = pci_irq_line;
+#ifdef MRP_NOMATCHING
+		printk("mrp: unit %d at 0x%x,0x%x,0x%x (irc = %d) base4=0x%x\n",
+			index, base0, base2, base3, pci_irq_line, base4);
+#else
 		printk("mrp: unit %d at 0x%x,0x%x,0x%x (irc = %d)\n",
 			index, base0, base2, base3, pci_irq_line);
+#endif
 		mrp_units[index].flags |= MRPF_DETECT;
 		boards_found++;
 	}
@@ -936,6 +1005,9 @@ int mrp_init(void)
 
 #ifdef CONFIG_PROC_FS
 	proc_register_dynamic(&proc_root, &mrp_proc_de);
+#ifdef MRP_NOMATCHING
+	proc_register_dynamic(&proc_root, &mrp2_proc_de);
+#endif /* MRP_NOMATCHING */
 #endif /* PROC_FS */
 
 	for (index = 0; index < 4; index++) {
@@ -959,6 +1031,7 @@ int mrp_init(void)
 		}
 		mrp->recvbuf = rc;
 
+#ifndef MRP_NOMATCHING
 		iRc = request_irq(mrp->irq, mrp_interrupt,
 				SA_INTERRUPT|SA_SHIRQ, "MRP", mrp);
 		if (!iRc) {
@@ -970,6 +1043,7 @@ int mrp_init(void)
 			printk("mrp%d: can't register irq\n", index);
 			continue;
 		}
+#endif /* !MRP_NOMATCHING */
 		mrp->base0->idk50 &= ~IDK50F_00000020;
 		mrp->base0->idk50 |=  IDK50F_40000000;
 		udelay(10);
@@ -1022,6 +1096,9 @@ void cleanup_module(void)
 	printk("mrp: unregistered character major %d\n", mrp_major);
 #ifdef CONFIG_PROC_FS
 	proc_unregister(&proc_root, mrp_proc_de.low_ino);
+#ifdef MRP_NOMATCHING
+	proc_unregister(&proc_root, mrp2_proc_de.low_ino);
+#endif /* MRP_NOMATCHING */
 #endif /* PROC_FS */
 }
 #endif

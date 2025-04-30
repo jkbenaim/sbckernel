@@ -3,6 +3,8 @@
 #include <linux/fs.h>
 #include <linux/proc_fs.h>
 
+#define MRP_NOMATCHING
+
 #define MRP_PSNET_BUILDDATE "Mar 10 1999"
 #define MRP_PSNET_BUILDTIME "21:15:11"
 
@@ -21,6 +23,12 @@
 #define MRP_IOCTL_DECI	(0xa14c4126)
 
 extern int mrp_debug;
+
+struct base0 {
+	char _pad0[0x4c];
+	unsigned int idk4c;
+	unsigned int idk50;
+};
 
 struct base2 {
 	volatile int fifoport;
@@ -59,11 +67,11 @@ struct mrpregs {
 	volatile unsigned short _afo2;
 };
 
-struct base0 {
-	char _pad0[0x4c];
-	unsigned int idk4c;
-	unsigned int idk50;
+#ifdef MRP_NOMATCHING
+struct base4 {
+	volatile unsigned int data[1];
 };
+#endif /* MRP_NOMATCHING */
 
 #define RINGBUF_SIZE (0x1000)
 #define RINGBUF_INDEX_MASK (0xfff)
@@ -121,6 +129,9 @@ struct mrp_unit {
 	struct ringbuf_s recvring;
 	struct wait_queue *wake_queue1;
 	struct wait_queue *wake_queue2;
+#ifdef MRP_NOMATCHING
+	struct base4 *base4;
+#endif /* MRP_NOMATCHING */
 };
 
 struct decihdr_s {
