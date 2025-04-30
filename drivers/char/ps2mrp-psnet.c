@@ -29,16 +29,6 @@ static struct proc_dir_entry mrp_proc_de = {
 	NULL,
 	mrp_get_info
 };
-#ifdef MRP_NOMATCHING
-static int mrp2_get_info(char *buffer, char **start, off_t offset, int length, int dummy);
-static struct proc_dir_entry mrp2_proc_de = {
-	0, 4, "mrp2",
-	S_IFREG | S_IRUSR | S_IRGRP | S_IROTH,
-	1, 0, 0, 0,
-	NULL,
-	mrp2_get_info
-};
-#endif /* MRP_NOMATCHING */
 #endif /* PROC_FS */
 
 static struct file_operations mrp_fops = {
@@ -835,47 +825,16 @@ static int mrp_get_info(char *buffer, char **start, off_t offset, int length, in
 			cat(" AEO=%04x", regs->aeo);
 			cat(" AFO=%04x\n", regs->afo);
 		}
-		sti();
-	}
-
-	return len;
-#undef cat
-}
-
 #ifdef MRP_NOMATCHING
-static int mrp2_get_info(char *buffer, char **start, off_t offset, int length, int dummy)
-{
-	int index, len = 0;
-#define cat(fmt, arg...) len += sprintf(buffer+len, fmt, ##arg);
-#define ARRAY_SIZE(x) (sizeof(x)/sizeof(*x))
-
-	cat("DECI1 $Revision: 3.10 $ %s %s\n", MRP_PSNET_BUILDDATE, MRP_PSNET_BUILDTIME);
-	for (index = 0; index < MRP_UNIT_MAX; index++) {
-		int i;
-		struct mrp_unit *mrp;
-		
-		cli();
-
-		mrp = &mrp_units[index];
-		if (mrp->flags & MRPF_DETECT) {
-			cat("unit%d", index);
-			if (mrp->base4) {
-				cat("\tbase4=%p\n", mrp->base4);
-				for (i = 0; i < ARRAY_SIZE(mrp->base4->data); i++) {
-					cat("\t\tbase4 [%2d]=%8x\n", i, mrp->base4->data[i]);
-				}
-			} else {
-				cat("\tbase4 unmapped\n");
-			}
-		}
-		
+		cat("base4 = 0x%08x\n", mrp->base4->data[0]);
+#endif /* MRP_NOMATCHING */
 		sti();
 	}
 
 	return len;
 #undef cat
 }
-#endif /* MRP_NOMATCHING */
+
 #endif /* PROC_FS */
 
 static int mrp_base(unsigned char bus, unsigned char dev_fn, unsigned char where)
@@ -1006,9 +965,6 @@ int mrp_init(void)
 
 #ifdef CONFIG_PROC_FS
 	proc_register_dynamic(&proc_root, &mrp_proc_de);
-#ifdef MRP_NOMATCHING
-	proc_register_dynamic(&proc_root, &mrp2_proc_de);
-#endif /* MRP_NOMATCHING */
 #endif /* PROC_FS */
 
 	for (index = 0; index < 4; index++) {
@@ -1031,7 +987,6 @@ int mrp_init(void)
 			continue;
 		}
 		mrp->recvbuf = rc;
-
 #ifndef MRP_NOMATCHING
 		iRc = request_irq(mrp->irq, mrp_interrupt,
 				SA_INTERRUPT|SA_SHIRQ, "MRP", mrp);
@@ -1097,9 +1052,6 @@ void cleanup_module(void)
 	printk("mrp: unregistered character major %d\n", mrp_major);
 #ifdef CONFIG_PROC_FS
 	proc_unregister(&proc_root, mrp_proc_de.low_ino);
-#ifdef MRP_NOMATCHING
-	proc_unregister(&proc_root, mrp2_proc_de.low_ino);
-#endif /* MRP_NOMATCHING */
 #endif /* PROC_FS */
 }
 #endif
