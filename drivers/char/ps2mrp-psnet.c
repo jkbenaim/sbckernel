@@ -201,7 +201,7 @@ static int mrp_reset(struct mrp_unit *mrp)
 	cli();
 
 	regs->ier = 0;
-	regs->rst = 0x8000;
+	regs->rst = MRP_RESETF_8000;
 	udelay(10);
 	regs->fst = 0xc0c0;
 	udelay(10);
@@ -249,7 +249,7 @@ static int mrp_bootp(struct mrp_unit *mrp)
 	if (cpr & MRP_CPRF_0100) {
 		if (cpr & MRP_CPRF_0200) {
 			wake_up(&mrp->wake_queue3);
-			cpr = 0x0f00;
+			//cpr = 0x0f00;
 		} else {
 			if (mrp->buf40) {
 				mrp_put_fifo(mrp, mrp->buf40, mrp->nbytes40);
@@ -301,7 +301,7 @@ static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *pt_regs)
 	mrp = (struct mrp_unit *) dev_id;
 	regs = mrp->regs;
 
-	if ((mrp < &mrp_units[0]) || (mrp >= &mrp_units[5])) {
+	if ((mrp < &mrp_units[0]) || (mrp > &mrp_units[4])) {
 		return;
 	}
 
@@ -337,7 +337,7 @@ static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *pt_regs)
 			mrp_cps(mrp);
 			wake_up(&mrp->wake_queue2);
 		} else if (stat) {
-			index = 0;
+			index = 666;
 			if (mrp == &mrp_units[0]) index = 0;
 			if (mrp == &mrp_units[1]) index = 1;
 			if (mrp == &mrp_units[2]) index = 2;
@@ -358,6 +358,7 @@ static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *pt_regs)
 	}
 
 	restore_flags(flags);
+	return;
 }
 
 static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
