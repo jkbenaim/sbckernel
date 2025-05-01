@@ -22,8 +22,10 @@
 int mrp_debug = 99;
 
 #ifdef CONFIG_PROC_FS
+#define MRP_PROCFILE_NAME "mrp"
+#define MRP_PROCFILE_NAME_LENGTH 3
 static struct proc_dir_entry mrp_proc_de = {
-	0, 3, "mrp",
+	0, MRP_PROCFILE_NAME_LENGTH, MRP_PROCFILE_NAME,
 	S_IFREG | S_IRUSR | S_IRGRP | S_IROTH,
 	1, 0, 0, 0,
 	NULL,
@@ -291,7 +293,7 @@ static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *pt_regs)
 	mrp = (struct mrp_unit *) dev_id;
 	regs = mrp->regs;
 
-	if ((mrp < &mrp_units[0]) || (mrp > &mrp_units[4])) {
+	if ((mrp < &mrp_units[0]) || (mrp >= &mrp_units[4])) {
 		return;
 	}
 
@@ -877,6 +879,13 @@ int mrp_init(void)
 	unsigned short index = 0;
 	int boards_found = 0;
 	int iRc;
+
+#ifdef MRP_NOMATCHING
+	if (strlen(MRP_PROCFILE_NAME) != MRP_PROCFILE_NAME_LENGTH) {
+		printk("mrp: strlen(\"%s\") != %d\n", MRP_PROCFILE_NAME, MRP_PROCFILE_NAME_LENGTH);
+		return 0;
+	}
+#endif /* MRP_NOMATCHING */
 
 	memset(mrp_units, 0, sizeof(mrp_units));
 	
