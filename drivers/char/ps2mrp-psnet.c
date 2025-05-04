@@ -415,36 +415,48 @@ static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbyte
 
 static int mrp_write(struct inode *inode, struct file *file, const char *buf, int len)
 {
-	int index, minor, rc;
+	int minor, rc;
+	unsigned index;
 	struct mrp_unit *mrp;
 	struct decihdr_s hdr;
 
 	minor = MINOR(inode->i_rdev);
 	index = minor & 3;
 
+	dprintk("mrp_write: inode %ph, file %ph, buf %ph, len %d\n",
+		inode,
+		file,
+		buf,
+		len
+	);
+
 	mrp_printk(2, "mrp_write: count=%d\n", len);
 
 	if (index > 3) {
+		dprintk("mrp_write: index out of range");
 		return -ENODEV;
 	}
 	mrp = &mrp_units[index];
 
 	if ((mrp->flags & MRPF_VALID) == 0) {
+		dprintk("mrp_write: valid flag not set");
 		return -ENODEV;
 	}
 
-	if ((minor & 0x40) == 0) {
+	if (minor & 0x40) {
 		int bytes_done;
 		/* special control plane case */
 		if ((mrp->flags & MRPF_CPOPEN) == 0) {
+			dprintk("mrp_write: cpopen flag not set");
 			return -ENODEV;
 		}
 		rc = verify_area(VERIFY_READ, buf, len);
 		if (rc != 0) {
+			dprintk("mrp_write: verify_area failed");
 			return rc;
 		}
 		cli();
-		if (0 >= len) {
+		if (rc < len) {
 			mrp_cps(mrp);
 			sti();
 			return 0;
@@ -455,12 +467,14 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 				/* loc_8000f5c */
 				if (file->f_flags & O_NONBLOCK) {
 					sti();
+					dprintk("mrp_write: O_NONBLOCK was set");
 					return -EWOULDBLOCK;
 				}
 				/* 8000f6a */
 				interruptible_sleep_on(&mrp->wake_queue2);
 				if (current->signal & ~current->blocked) {
 					sti();
+					dprintk("mrp_write: unblocked signal");
 					return -EINTR;
 				}
 			}
@@ -481,15 +495,14 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 	if (len < sizeof(hdr)) {
 		return -EINVAL;
 	}
-	if (len > 0x4000) {
+	if (len > MRP_MAX_PKT_SIZE) {
 		return -EINVAL;
 	}
-	rc = verify_area(VERIFY_READ, buf, len);
-	if (rc != 0) {
+	/* 8001037 */
+	if ((rc = verify_area(VERIFY_READ, buf, sizeof(hdr))) != 0) {
 		return rc;
 	}
-	/* 8001037 */
-	memcpy(&hdr, buf, sizeof(hdr));
+	memcpy_fromfs(&hdr, buf, sizeof(hdr));
 	if (hdr.magic != DECI_MAGIC) {
 		return -EINVAL;
 	}
@@ -565,7 +578,7 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 			return -EINTR;
 		}
 	}
-	memcpy(mrp->sendbuf, buf, len);
+	copy_from_user(mrp->sendbuf, buf, len);
 	mrp->deci_out = mrp->sendbuf;
 	mrp->slen = len;
 	mrp_send(mrp);

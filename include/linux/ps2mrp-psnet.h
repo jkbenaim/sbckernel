@@ -3,7 +3,7 @@
 #include <linux/fs.h>
 #include <linux/proc_fs.h>
 
-#define MRP_NOMATCHING
+//#define MRP_NOMATCHING
 
 #define MRP_PSNET_BUILDDATE "Mar 10 1999"
 #define MRP_PSNET_BUILDTIME "21:15:11"
@@ -21,6 +21,12 @@
 #define MRP_IOCTL_SF	(0xa14c5346)
 #define MRP_IOCTL_SY	(0xa14c5359)
 #define MRP_IOCTL_DECI	(0xa14c4126)
+
+#ifdef MRP_NOMATCHING
+#define dprintk printk
+#else
+#define dprintk(fmt, arg...)
+#endif
 
 extern int mrp_debug;
 
