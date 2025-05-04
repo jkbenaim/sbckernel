@@ -668,30 +668,35 @@ static int mrp_open(struct inode *inode, struct file *file)
 
 static void mrp_release(struct inode *inode, struct file *file)
 {
-	int index, minor;
-	int flags;
-
+	unsigned index, minor;
+	int flags, *realflags;
 	minor = MINOR(inode->i_rdev);
 	index = minor & 3;
-	flags = mrp_units[index].flags;
+
+	realflags = &mrp_units[index].flags;
 
 	mrp_printk(2, "mrp_release: index=%d\n", index);
 	
-	if (index > 4) {
+	if (index > 3) {
 		return;
 	}
 
-	if (!(flags & MRPF_VALID)) {
+	flags = *realflags;
+
+	if ((flags & MRPF_VALID) == 0) {
 		return;
 	}
-	if (minor & 0x40) {
-		if (flags & MRPF_OPENED) {
-			return;
+
+	if (MINOR(inode->i_rdev) & 0x40) {
+		if (flags & MRPF_CPOPEN) {
+			flags &= ~MRPF_CPOPEN;
 		}
-	} else if (!(flags & MRPF_CPOPEN)) {
-		return;
+	} else {
+		if (flags & MRPF_OPENED) {
+			flags &= ~MRPF_OPENED;
+		}
 	}
-	mrp_units[index].flags = flags;
+	*realflags = flags;
 	MOD_DEC_USE_COUNT;
 }
 
@@ -826,10 +831,10 @@ static int mrp_get_info(char *buffer, char **start, off_t offset, int length, in
 			cat(" FSI=%04x", regs->fsi);
 			cat(" AEO=%04x", regs->aeo);
 			cat(" AFO=%04x\n", regs->afo);
-		}
 #ifdef MRP_NOMATCHING
-		cat("base4 = 0x%08x\n", mrp->base4->data[0]);
+			cat(" base4 = 0x%08x\n", mrp->base4->data[0]);
 #endif /* MRP_NOMATCHING */
+		}
 		sti();
 	}
 
