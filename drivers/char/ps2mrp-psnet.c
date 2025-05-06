@@ -247,7 +247,7 @@ static int mrp_bootp(struct mrp_unit *mrp)
 	mrp->regs->fst = MRP_FSTF_0040 | MRP_FSTF_0080 | MRP_FSTF_4000 | MRP_FSTF_8000;
 	udelay(10);
 	mrp->regs->fst = 0;
-	mrp->flags &= MRPF_SBUSY | MRPF_RDONE;
+	mrp->flags &= ~(MRPF_SBUSY | MRPF_RDONE);
 	mrp->rlen = 0;
 	mrp->slen = 0;
 	if (cpr & MRP_CPRF_0100) {
@@ -1078,7 +1078,6 @@ int mrp_init(void)
 			continue;
 		}
 		mrp->recvbuf = rc;
-#if 1
 		iRc = request_irq(mrp->irq, mrp_interrupt,
 				SA_INTERRUPT|SA_SHIRQ, "MRP", mrp);
 		if (!iRc) {
@@ -1090,7 +1089,6 @@ int mrp_init(void)
 			printk("mrp%d: can't register irq\n", index);
 			continue;
 		}
-#endif /* !MRP_NOMATCHING */
 		mrp->base0->idk50 &= ~IDK50F_00000020;
 		mrp->base0->idk50 |=  IDK50F_40000000;
 		udelay(10);
