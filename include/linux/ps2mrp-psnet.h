@@ -3,7 +3,7 @@
 #include <linux/fs.h>
 #include <linux/proc_fs.h>
 
-//#define MRP_NOMATCHING
+#define MRP_NOMATCHING
 
 #define MRP_PSNET_BUILDDATE "Mar 10 1999"
 #define MRP_PSNET_BUILDTIME "21:15:11"
@@ -23,7 +23,10 @@
 #define MRP_IOCTL_DECI	(0xa14c4126)
 
 #ifdef MRP_NOMATCHING
-#define dprintk printk
+#define dprintk(fmt, arg...) {			\
+	printk("%s:%d  ", __FILE__, __LINE__);	\
+	printk(fmt, ##arg);			\
+}
 #else
 #define dprintk(fmt, arg...)
 #endif
@@ -156,6 +159,11 @@ struct decihdr_s {
 	unsigned int req;
 	unsigned int cksum;
 	unsigned int data[0];
+} __attribute__((packed));
+
+struct deci_reset_pkt_s {
+	struct decihdr_s hdr;
+	unsigned int reset_mode;
 } __attribute__((packed));
 
 #define DECI_MAGIC (0xa14c)

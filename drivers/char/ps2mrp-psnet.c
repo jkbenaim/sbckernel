@@ -68,24 +68,29 @@ struct mrp_unit mrp_units[4];
 static inline unsigned long copy_from_user(void *to, const void *from, unsigned long n)
 {
         int i;
+	dprintk("copy_from_user: to %ph, from %ph, n %lxh\n", to, from, n);
         if ((i = verify_area(VERIFY_READ, from, n)) != 0)
                 return i;
         memcpy_fromfs(to, from, n);
+	dprintk("copy_from_user returning 0");
         return 0;
 }
 
 static inline unsigned long copy_to_user(void *to, const void *from, unsigned long n)
 {
         int i;
+	dprintk("copy_to_user: to %ph, from %ph, n %lxh\n", to, from, n);
         if ((i = verify_area(VERIFY_WRITE, to, n)) != 0)
                 return i;
         memcpy_tofs(to, from, n);
+	dprintk("copy_to_user returning 0");
         return 0;
 }
 #endif
 
 static void mrp_dump_regs(struct mrpregs *regs)
 {
+	dprintk("mrp_dump_regs, regs %ph\n", regs);
 	if (mrp_debug >= 3) {
 		printk("* BID=%04x RST=%04x CPS=%04x CPR=%04x\n",
 			regs->bid,
@@ -107,13 +112,17 @@ static void mrp_dump_regs(struct mrpregs *regs)
 			regs->aeo,
 			regs->afo);
 	}
+	dprintk("mrp_dump_regs returning void\n");
 }
 
 static int mrp_send(struct mrp_unit *mrp)
 {
+	int rc;
 	mrp_printk(2, "mrp_send: slen=%d\n", mrp->slen);
 
-	return mrp_put_fifo(mrp, mrp->deci_out, mrp->slen);
+	rc = mrp_put_fifo(mrp, mrp->deci_out, mrp->slen);
+	dprintk("mrp_send returning %d\n", rc);
+	return rc;
 }
 
 static int mrp_recv(struct mrp_unit *mrp)
@@ -173,10 +182,12 @@ static int mrp_recv(struct mrp_unit *mrp)
 		mrp->regs->ier |= MRP_STATF_RECV;
 	}
 	
+	dprintk("mrp_recv returning 1\n");
 	return 1;
 
 out_error:
 	mrp->regs->ier |= MRP_STATF_RECV;
+	dprintk("mrp_recv returning -1\n");
 	return -1;
 }
 
@@ -223,6 +234,7 @@ static int mrp_reset(struct mrp_unit *mrp)
 	mrp->recvring.count = 0;
 
 	restore_flags(flags);
+	dprintk("mrp_reset returning 0\n");
 	return 0;
 }
 
@@ -256,11 +268,13 @@ static int mrp_bootp(struct mrp_unit *mrp)
 	mrp->regs->csi = 4;
 	mrp->regs->fsi = 4;
 	mrp->regs->ier |= MRP_STATF_BOOTP;
+	dprintk("mrp_bootp returning 0\n");
 	return 0;
 }
 
 static void mrp_cpr(struct mrp_unit *mrp)
 {
+	dprintk("mrp_cpr\n");
 	if (mrp->recvring.count <= 0xfff) {
 		ringbuf_put(&mrp->recvring, mrp->regs->cpr);
 		mrp->regs->csi = 1;
@@ -268,10 +282,12 @@ static void mrp_cpr(struct mrp_unit *mrp)
 		mrp->regs->ier |= MRP_STATF_CPR;
 		wake_up(&mrp->wake_queue1);
 	}
+	dprintk("mrp_cpr returning void\n");
 }
 
 static void mrp_cps(struct mrp_unit *mrp)
 {
+	dprintk("mrp_cps\n");
 	if (mrp->flags & MRPF_CPBUSY) {
 		if (mrp->sendring.count > 0) {
 			mrp->flags |= MRPF_CPBUSY;
@@ -281,6 +297,7 @@ static void mrp_cps(struct mrp_unit *mrp)
 			wake_up(&mrp->wake_queue2);
 		}
 	}
+	dprintk("mrp_cps returning void\n");
 }
 
 static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *pt_regs)
@@ -292,16 +309,20 @@ static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *pt_regs)
 	struct mrpregs *regs;
 	mrp = (struct mrp_unit *) dev_id;
 	regs = mrp->regs;
+	
+	dprintk("mrp_interrupt: irq %d, dev_id %ph, pt_regs %ph\n", irq, dev_id, pt_regs);
 
 	if ((mrp < &mrp_units[0]) || (mrp >= &mrp_units[4])) {
+		dprintk("mrp_interrupt: returning\n");
 		return;
 	}
 
 	save_flags(flags);
 	cli();
 
-	if (mrp->base0->idk4c & IDK4CF_0004) {
+	if ((mrp->base0->idk4c & IDK4CF_0004) == 0) {
 		restore_flags(flags);
+		dprintk("mrp_interrupt: returning\n");
 		return;
 	}
 
@@ -350,6 +371,7 @@ static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *pt_regs)
 	}
 
 	restore_flags(flags);
+	dprintk("mrp_interrupt returning\n");
 	return;
 }
 
@@ -358,6 +380,9 @@ static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbyte
 	struct mrp_unit *mrp;
 	int counter, index, minor, rc;
 
+	dprintk("mrp_read: inode %ph, file %ph, buf %ph, nbytes %xh\n",
+		inode, file, buf, nbytes);
+
 	minor = MINOR(inode->i_rdev);
 	index = minor & 3;
 	mrp = &mrp_units[index];
@@ -365,23 +390,29 @@ static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbyte
 	mrp_printk(2, "mrp_read: count=%d\n", nbytes);
 
 	if (index > 3) {
+		dprintk("mrp_read returning %d\n", -ENODEV);
 		return -ENODEV;
 	}
 	if ((mrp->flags & MRPF_VALID) == 0) {
+		dprintk("mrp_read returning %d\n", -ENODEV);
 		return -ENODEV;
 	}
 	if (minor & 0x40) {
 		if ((mrp->flags & MRPF_OPENED) == 0) {
+		dprintk("mrp_read returning %d\n", -ENODEV);
 			return -ENODEV;
 		}
 		if (mrp->flags & MRPF_RESET) {
+		dprintk("mrp_read returning %d\n", -EIO);
 			return -EIO;
 		}
 		if (nbytes >= MRP_MAX_PKT_SIZE) {
+		dprintk("mrp_read returning %d\n", -EINVAL);
 			return -EINVAL;
 		}
 	} else if (mrp->flags & MRPF_CPOPEN) {
 		/* not a regular inode minor, and not CPOPEN'd. */
+		dprintk("mrp_read returning %d\n", -ENODEV);
 		return -ENODEV;
 	}
 
@@ -389,8 +420,10 @@ static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbyte
 	cli();
 
 	rc = verify_area(VERIFY_WRITE, buf, nbytes);
-	if (rc != 0)
+	if (rc != 0) {
+		dprintk("mrp_read returning %d\n", rc);
 		return rc;
+	}
 	
 	/* 0x8000bc5 */
 	for (counter = 0; counter < nbytes; counter++) {
@@ -399,10 +432,12 @@ static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbyte
 		while (mrp->recvring.count == 0) {
 			/* 8000be5 */
 			if (file->f_flags & O_NONBLOCK) {
+				dprintk("mrp_read returning %d\n", -EWOULDBLOCK);
 				return -EWOULDBLOCK;
 			}
 			interruptible_sleep_on(&mrp->wake_queue1);
 			if (current->signal & ~current->blocked) {
+				dprintk("mrp_read returning %d\n", -EINTR);
 				return -EINTR;
 			}
 		}
@@ -410,6 +445,7 @@ static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbyte
 	}
 	/* 8000c71 */
 	mrp->regs->ier |= MRP_STATF_CPR;
+	dprintk("mrp_read returning %d\n", counter);
 	return counter;
 }
 
@@ -433,13 +469,13 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 	mrp_printk(2, "mrp_write: count=%d\n", len);
 
 	if (index > 3) {
-		dprintk("mrp_write: index out of range");
+		dprintk("mrp_write: index out of range, returning -ENODEV\n");
 		return -ENODEV;
 	}
 	mrp = &mrp_units[index];
 
 	if ((mrp->flags & MRPF_VALID) == 0) {
-		dprintk("mrp_write: valid flag not set");
+		dprintk("mrp_write: valid flag not set, returning -ENODEV\n");
 		return -ENODEV;
 	}
 
@@ -447,18 +483,19 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 		int bytes_done;
 		/* special control plane case */
 		if ((mrp->flags & MRPF_CPOPEN) == 0) {
-			dprintk("mrp_write: cpopen flag not set");
+			dprintk("mrp_write: cpopen flag not set, returning -ENODEV\n");
 			return -ENODEV;
 		}
 		rc = verify_area(VERIFY_READ, buf, len);
 		if (rc != 0) {
-			dprintk("mrp_write: verify_area failed");
+			dprintk("mrp_write: verify_area failed, returning rc (%d)\n", rc);
 			return rc;
 		}
 		cli();
 		if (rc < len) {
 			mrp_cps(mrp);
 			sti();
+			dprintk("mrp_write: rc (%d) < len (%d), returning 0\n", rc, len);
 			return 0;
 		}
 		/* loc_8000f4c */
@@ -467,14 +504,14 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 				/* loc_8000f5c */
 				if (file->f_flags & O_NONBLOCK) {
 					sti();
-					dprintk("mrp_write: O_NONBLOCK was set");
+					dprintk("mrp_write: O_NONBLOCK was set, returning -EWOULDBLOCK\n");
 					return -EWOULDBLOCK;
 				}
 				/* 8000f6a */
 				interruptible_sleep_on(&mrp->wake_queue2);
 				if (current->signal & ~current->blocked) {
 					sti();
-					dprintk("mrp_write: unblocked signal");
+					dprintk("mrp_write: unblocked signal, returning -EINTR\n");
 					return -EINTR;
 				}
 			}
@@ -485,55 +522,57 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 		/* loc_8000fd6 */
 		mrp_cps(mrp);
 		sti();
+		dprintk("mrp_write: returning len (%d)\n", len);
 		return len;
 	}
 
 	/* normal case */
 	if ((mrp->flags & MRPF_OPENED) == 0) {
+		dprintk("mrp_write: not opened, so returning -ENODEV\n");
 		return -ENODEV;
 	}
 	if (len < sizeof(hdr)) {
+		dprintk("mrp_write: len (%d) < sizeof(hdr) (%u), so returning -EINVAL\n", len, sizeof(hdr));
 		return -EINVAL;
 	}
 	if (len > MRP_MAX_PKT_SIZE) {
+		dprintk("mrp_write: len (%d) > MRP_MAX_PKT_SIZE (%d), so returning -EINVAL\n", len, MRP_MAX_PKT_SIZE);
 		return -EINVAL;
 	}
 	/* 8001037 */
 	if ((rc = verify_area(VERIFY_READ, buf, sizeof(hdr))) != 0) {
+		dprintk("mrp_write: VERIFY_READ failed, so returning rc (%d)\n", rc);
 		return rc;
 	}
 	memcpy_fromfs(&hdr, buf, sizeof(hdr));
 	if (hdr.magic != DECI_MAGIC) {
+		dprintk("mrp_write: hdr.magic (%04xh) != DECI_MAGIC (%04xh) so returning -EINVAL\n",
+			hdr.magic, DECI_MAGIC);
 		return -EINVAL;
 	}
 	if (len != hdr.size) {
+		dprintk("mrp_write: len (%d) != hdr.size (%d), so returning -EINVAL\n", len, hdr.size);
 		return -EINVAL;
 	}
 	if (hdr.cksum != deci_cksum((unsigned int *) &hdr)) {
+		dprintk("mrp_write: checksum invalid, so returning -EINVAL\n");
 		return -EINVAL;
 	}
 
 	if (hdr.req == REQ_TRESET) {
-		void *buffy = NULL;
-		struct decihdr_s *hdr2 = (struct decihdr_s *) buf;
-		unsigned reset_mode = 0;
-		if (len >= 0x24) {
-			reset_mode = (hdr2->data[0] >> 4) & 0xf;
+		//struct deci_reset_pkt_s pkt;
+		//struct decihdr_s hdr2 = (struct decihdr_s *) buf;
+		int reset_mode;
+		if (!(len > 0x23u)) {
+			reset_mode = 0;
+		} else {
+			int *frompkt = (int *)(buf + 0x20);
+			memcpy_fromfs(&reset_mode, frompkt, 4);
+			reset_mode >>= 4;
+			reset_mode &= 0xf;
 		}
 		cli();
 		switch (reset_mode) {
-		case 0:
-			if (mrp->buf40) {
-				kfree(mrp->buf40);
-			}
-			mrp->buf40 = kmalloc(len, GFP_KERNEL);
-			if (!mrp->buf40) {
-				sti();
-				return -ENOMEM;
-			}
-			mrp->nbytes40 = len;
-			buffy = mrp->buf40;
-			break;
 		case 1:
 			if (mrp->buf38) {
 				kfree(mrp->buf38);
@@ -541,10 +580,24 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 			mrp->buf38 = kmalloc(len, GFP_KERNEL);
 			if (!mrp->buf38) {
 				sti();
+				dprintk("mrp_write: buf38 is null, so returning -ENOMEM\n");
 				return -ENOMEM;
 			}
 			mrp->nbytes38 = len;
-			buffy = mrp->buf38;
+			memcpy_fromfs(mrp->buf38, buf, len);
+			break;
+		case 0:
+			if (mrp->buf40) {
+				kfree(mrp->buf40);
+			}
+			mrp->buf40 = kmalloc(len, GFP_KERNEL);
+			if (!mrp->buf40) {
+				sti();
+				dprintk("mrp_write: buf40 is null, so returning -ENOMEM\n");
+				return -ENOMEM;
+			}
+			mrp->nbytes40 = len;
+			memcpy_fromfs(mrp->buf40, buf, len);
 			break;
 		case 2:
 		default:
@@ -559,10 +612,12 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 			wake_up(&mrp->wake_queue4);
 		}
 		sti();
+		dprintk("mrp_write: returning len (%d)\n", len);
 		return len;
 	}
 	
 	if ((mrp->flags & MRPF_RESET) == 0) {
+		dprintk("mrp_write: reset flag not set, so returning -EIO\n");
 		return -EIO;
 	}
 
@@ -570,19 +625,22 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 	while (mrp->flags & MRPF_SBUSY) {
 		if (file->f_flags & O_NONBLOCK) {
 			sti();
+			dprintk("mrp_write: returning -EWOULDBLOCK\n");
 			return -EWOULDBLOCK;
 		}
 		interruptible_sleep_on(&mrp->wake_queue3);
 		if (current->signal & ~current->blocked) {
 			sti();
+			dprintk("mrp_write: returning -EINTR\n");
 			return -EINTR;
 		}
 	}
-	copy_from_user(mrp->sendbuf, buf, len);
+	//copy_from_user(mrp->sendbuf, buf, len);
 	mrp->deci_out = mrp->sendbuf;
 	mrp->slen = len;
 	mrp_send(mrp);
 	sti();
+	dprintk("mrp_write: returning len (%d)\n", len);
 	return len;
 }
 
@@ -595,6 +653,7 @@ static int mrp_select(struct inode *inode, struct file *file, int sel_type, sele
 	index = minor & 3;
 
 	if (index > 3) {
+		dprintk("mrp_select: returning 0\n");
 		return 0;
 	}
 	
@@ -604,12 +663,14 @@ static int mrp_select(struct inode *inode, struct file *file, int sel_type, sele
 		switch (sel_type) {
 		case SEL_IN:
 			if (mrp->recvring.count > 0) {
+				dprintk("mrp_select: returning 1\n");
 				return 1;
 			}
 			select_wait(&mrp->wake_queue1, wait);
 			break;
 		case SEL_OUT:
 			if (mrp->sendring.count <= (RINGBUF_SIZE - 2)) {
+				dprintk("mrp_select: returning 1\n");
 				return 1;
 			}
 			select_wait(&mrp->wake_queue2, wait);
@@ -618,18 +679,21 @@ static int mrp_select(struct inode *inode, struct file *file, int sel_type, sele
 	} else {
 		if (sel_type == SEL_IN) {
 			if (mrp->flags & (MRPF_RDONE | MRPF_REQTAG)) {
+				dprintk("mrp_select: returning 1\n");
 				return 1;
 			}
 			select_wait(&mrp->wake_queue4, wait);
 		}
 		if (sel_type == SEL_OUT) {
 			if ((mrp->flags & MRPF_SBUSY) == 0) {
+				dprintk("mrp_select: returning 1\n");
 				return 1;
 			}
 			select_wait(&mrp->wake_queue3, wait);
 		}
 	}
 	
+	dprintk("mrp_select: returning 0\n");
 	return 0;
 }
 
@@ -1014,7 +1078,7 @@ int mrp_init(void)
 			continue;
 		}
 		mrp->recvbuf = rc;
-#ifndef MRP_NOMATCHING
+#if 1
 		iRc = request_irq(mrp->irq, mrp_interrupt,
 				SA_INTERRUPT|SA_SHIRQ, "MRP", mrp);
 		if (!iRc) {
