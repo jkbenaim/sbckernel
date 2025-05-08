@@ -131,7 +131,7 @@ static int mrp_recv(struct mrp_unit *mrp)
 	struct decihdr_s *hdr;
 	
 	mrp_printk(2, "mrp_recv:\n");
-	if (!(mrp->flags & MRPF_RDONE)) {
+	if (mrp->flags & MRPF_RDONE) {
 		return 0;
 	}
 	if (mrp->regs->fst & MRP_FSTF_0001) {
@@ -146,12 +146,17 @@ static int mrp_recv(struct mrp_unit *mrp)
 
 		mrp_get_fifo(mrp, mrp->recvbuf, 4);
 		fst = mrp->regs->fst;
-		if ((fst & MRP_FSTF_0010) == 0) {
+		if (fst & MRP_FSTF_0010) {
+			/* (fst & MRP_FSTF_0010) != 0 */
+			mrp_printk(1, "mrp_recv: invalid fifo status (%04x)\n", fst);
+			mrp->regs->rxc = 1;
+			goto out_error;
+		} else {
 			mrp->rlen = hdr->size;
 			mrp->deci_in += 4;
 
 			if ( (hdr->magic != DECI_MAGIC) || (hdr->size > MRP_MAX_PKT_SIZE) ) {
-				if ((fst & MRP_FSTF_0001) != 0) {
+				if ((mrp->regs->fst & MRP_FSTF_0001) != 0) {
 					mrp_printk(1, "mrp_recv: bad mag/len (%04x/%04x)\n",
 						hdr->magic,
 						hdr->size
@@ -164,11 +169,6 @@ static int mrp_recv(struct mrp_unit *mrp)
 					hdr->size
 				);
 			}
-		} else {
-			/* (fst & MRP_FSTF_0010) != 0 */
-			mrp_printk(1, "mrp_recv: invalid fifo status (%04x)\n", fst);
-			mrp->regs->rxc = 1;
-			goto out_error;
 		}
 	} while ( (hdr->magic != DECI_MAGIC) || ((hdr->size - sizeof(*hdr)) > (MRP_MAX_PKT_SIZE - sizeof(*hdr))) );
 
@@ -300,6 +300,36 @@ static void mrp_cps(struct mrp_unit *mrp)
 	dprintk("mrp_cps returning void\n");
 }
 
+#ifdef MRP_NOMATCHING
+static void mrp_stat_decode(struct mrp_unit *mrp, char *buf, int nbytes)
+{
+	int i;
+	unsigned short stat;
+	const char bits[] = "84wrRbCc";
+	
+	if (nbytes < 9)
+		return;
+	if (!mrp)
+		return;
+	if (!buf)
+		return;
+	if (strlen(bits) != 8)
+		return;
+	
+	stat = mrp->regs->ist & mrp->regs->ier;
+	
+	for (i = 0; i < 8; i++) {
+		int bit = 7-i;
+		if (stat & (1<<bit)) {
+			buf[i] = bits[i];
+		} else {
+			buf[i] = '-';
+		}
+	}
+	buf[8] = '\0';
+}
+#endif
+
 static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *pt_regs)
 {
 	unsigned long flags;
@@ -329,7 +359,14 @@ static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *pt_regs)
 	mrp->nintr++;
 	stat = regs->ist & regs->ier;
 	if (mrp_debug >= 2) {
+#ifdef MRP_NOMATCHING
+		char buf[9];
+		buf[0] = '\0';
+		mrp_stat_decode(mrp, buf, sizeof(buf));
+		mrp_printk(2, "mrp_interrupt: stat=0x%04x (%s)\n", stat, buf);
+#else
 		mrp_printk(2, "mrp_interrupt: stat=0x%04x\n", stat);
+#endif
 		mrp_dump_regs(regs);
 	}
 
@@ -397,7 +434,7 @@ static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbyte
 		dprintk("mrp_read returning %d\n", -ENODEV);
 		return -ENODEV;
 	}
-	if (minor & 0x40) {
+	if ((minor & 0x40) == 0) {
 		if ((mrp->flags & MRPF_OPENED) == 0) {
 		dprintk("mrp_read returning %d\n", -ENODEV);
 			return -ENODEV;
@@ -909,7 +946,8 @@ static int mrp_get_info(char *buffer, char **start, off_t offset, int length, in
 			cat(" AEO=%04x", regs->aeo);
 			cat(" AFO=%04x\n", regs->afo);
 #ifdef MRP_NOMATCHING
-			cat(" base4 = 0x%08x\n", mrp->base4->data[0]);
+			cat(" base4 = 0x%08x,", mrp->base4->data[0]);
+			cat(" nbytes38=%xh, nbytes40=%xh\n", mrp->nbytes38, mrp->nbytes40); 
 #endif /* MRP_NOMATCHING */
 		}
 		sti();
@@ -1104,6 +1142,7 @@ int mrp_init(void)
 #ifdef MODULE
 int init_module(void)
 {
+	dprintk("mrp loaded, mrp_dump_regs at 0x%p\n", &mrp_dump_regs);
 	return mrp_init();
 }
 

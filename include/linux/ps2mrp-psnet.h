@@ -3,7 +3,7 @@
 #include <linux/fs.h>
 #include <linux/proc_fs.h>
 
-#define MRP_NOMATCHING
+//#define MRP_NOMATCHING
 
 #define MRP_PSNET_BUILDDATE "Mar 10 1999"
 #define MRP_PSNET_BUILDTIME "21:15:11"
