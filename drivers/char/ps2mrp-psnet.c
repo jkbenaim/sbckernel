@@ -129,13 +129,16 @@ static int mrp_recv(struct mrp_unit *mrp)
 {
 	__label__ out_error;
 	struct decihdr_s *hdr;
+	unsigned short fst;
 	
 	mrp_printk(2, "mrp_recv:\n");
 	if (mrp->flags & MRPF_RDONE) {
 		return 0;
 	}
-	if (mrp->regs->fst & MRP_FSTF_0001) {
-		mrp_printk(1, "mrp_recv: invalid fifo status (%04x)\n", mrp->regs->fst);
+	
+	fst = mrp->regs->fst;
+	if (fst & MRP_FSTF_0001) {
+		mrp_printk(1, "mrp_recv: invalid fifo status (%04x)\n", fst);
 		mrp->regs->rxc = 1;
 		goto out_error;
 	}
