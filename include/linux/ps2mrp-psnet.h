@@ -166,8 +166,15 @@ struct deci_reset_pkt_s {
 	unsigned int reset_mode;
 } __attribute__((packed));
 
-#define DECI_MAGIC (0xa14c)
-#define REQ_TRESET (0x54010000)
+struct deci_acknak_pkt_s {
+	struct decihdr_s hdr;
+	unsigned char ack;
+	unsigned char nak;
+} __attribute__((packed));
+
+#define DECI_MAGIC	(0xa14c)
+#define REQ_TRESET	(0x54010000)
+#define REQ_ZACKNAK	(0x01010100)
 
 static inline unsigned int
 deci_cksum(unsigned int *hdr)
@@ -288,11 +295,13 @@ enum mrp_cpr_flags {
 };
 
 static inline unsigned
-mrp_put_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nbytes)
+mrp_put_fifo(struct mrp_unit *mrp, void *src, int nbytes)
 {
 	unsigned nw = (nbytes + 3) >> 2;
-	volatile struct base2 *base2 = mrp->base2;
-	unsigned loops = 0;
+	volatile struct base2 *base2;
+	int loops = 0;
+	unsigned int *buf = (unsigned int *)src;
+	base2 = mrp->base2;
 	
 	mrp_printk(3, "mrp_put_fifo: nw=%d\n", nw);
 	
@@ -305,19 +314,16 @@ mrp_put_fifo(struct mrp_unit *mrp, unsigned int *buf, unsigned nbytes)
 	case 2:	base2->fifoport = *buf++;
 	case 1:	base2->fifoport = *buf++;
 	default:
-	case 0: loops = nw >> 3;
-	}
-	while (loops) {
-		base2->fifoport = buf[0];
-		base2->fifoport = buf[1];
-		base2->fifoport = buf[2];
-		base2->fifoport = buf[3];
-		base2->fifoport = buf[4];
-		base2->fifoport = buf[5];
-		base2->fifoport = buf[6];
-		base2->fifoport = buf[7];
-		buf += 8;
-		loops--;
+	case 0: for (loops = (signed int)nw>>3; loops-- > 0; buf += 8) {
+			base2->fifoport = buf[0];
+			base2->fifoport = buf[1];
+			base2->fifoport = buf[2];
+			base2->fifoport = buf[3];
+			base2->fifoport = buf[4];
+			base2->fifoport = buf[5];
+			base2->fifoport = buf[6];
+			base2->fifoport = buf[7];
+		}
 	}
 	mrp->regs->txc = 1;
 	mrp->regs->ier |= MRP_STATF_WAKE;

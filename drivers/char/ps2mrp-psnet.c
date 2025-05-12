@@ -125,76 +125,6 @@ static int mrp_send(struct mrp_unit *mrp)
 	return rc;
 }
 
-#if 0
-static int mrp_recv(struct mrp_unit *mrp)
-{
-	__label__ out_error;
-	struct decihdr_s *hdr;
-	unsigned short fst;
-	
-	mrp_printk(2, "mrp_recv:\n");
-	if (mrp->flags & MRPF_RDONE) {
-		return 0;
-	}
-	
-	fst = mrp->regs->fst;
-	if (fst & MRP_FSTF_0001) {
-		mrp_printk(1, "mrp_recv: invalid fifo status (%04x)\n", fst);
-		mrp->regs->rxc = 1;
-		goto out_error;
-	}
-
-	do {
-		unsigned short fst;
-		mrp->deci_in = hdr = (struct decihdr_s *) mrp->recvbuf;	// woof!
-
-		mrp_get_fifo(mrp, mrp->recvbuf, 4);
-		fst = mrp->regs->fst;
-		if (fst & MRP_FSTF_0010) {
-			/* (fst & MRP_FSTF_0010) != 0 */
-			mrp_printk(1, "mrp_recv: invalid fifo status (%04x)\n", fst);
-			mrp->regs->rxc = 1;
-			goto out_error;
-		} else {
-			mrp->rlen = hdr->size;
-			mrp->deci_in += 4;
-
-			if ( (hdr->magic != DECI_MAGIC) || (hdr->size > MRP_MAX_PKT_SIZE) ) {
-				if ((mrp->regs->fst & MRP_FSTF_0001) != 0) {
-					mrp_printk(1, "mrp_recv: bad mag/len (%04x/%04x)\n",
-						hdr->magic,
-						hdr->size
-					);
-					mrp->regs->rxc = 1;
-					goto out_error;
-				}
-				mrp_printk(1, "mrp_recv: rescanning (%04x/%04x)\n",
-					hdr->magic,
-					hdr->size
-				);
-			}
-		}
-	} while ( (hdr->magic != DECI_MAGIC) || ((hdr->size - sizeof(*hdr)) > (MRP_MAX_PKT_SIZE - sizeof(*hdr))) );
-
-	mrp_get_fifo(mrp, mrp->deci_in, mrp->rlen - 4);
-	if (hdr->cksum == deci_cksum((unsigned int *) hdr)) {
-		mrp_printk(2, "mrp_recv: len=%d\n", mrp->rlen);
-		mrp->flags |= MRPF_RDONE;
-		wake_up(&mrp->wake_queue4);
-	} else {
-		mrp_printk(1, "mrp_recv: bad sum\n");
-		mrp->regs->ier |= MRP_STATF_RECV;
-	}
-	
-	dprintk("mrp_recv returning 1\n");
-	return 1;
-
-out_error:
-	mrp->regs->ier |= MRP_STATF_RECV;
-	dprintk("mrp_recv returning -1\n");
-	return -1;
-}
-#else
 static int mrp_recv(struct mrp_unit *mrp)
 {
 	__label__ rescan_header;
@@ -263,7 +193,6 @@ rescan_header:
 
 	return 1;
 }
-#endif
 
 static int mrp_reset(struct mrp_unit *mrp)
 {
@@ -489,7 +418,8 @@ static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *pt_regs)
 static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbytes)
 {
 	struct mrp_unit *mrp;
-	int counter, index, minor, rc;
+	int index, minor, rc;
+	int bytes_copied = 0;
 
 	dprintk("mrp_read: inode %ph, file %ph, buf %ph, nbytes %xh\n",
 		inode, file, buf, nbytes);
@@ -508,56 +438,92 @@ static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbyte
 		dprintk("mrp_read returning %d\n", -ENODEV);
 		return -ENODEV;
 	}
-	if ((minor & 0x40) == 0) {
-		if ((mrp->flags & MRPF_OPENED) == 0) {
-		dprintk("mrp_read returning %d\n", -ENODEV);
+	if (minor & 0x40) {
+		struct ringbuf_s *recv_ring = &mrp->recvring;
+		
+		if ((mrp->flags & MRPF_CPOPEN) == 0) {
+			/* not a regular inode minor, and not CPOPEN'd. */
+			dprintk("mrp_read returning %d\n", -ENODEV);
 			return -ENODEV;
 		}
-		if (mrp->flags & MRPF_RESET) {
-		dprintk("mrp_read returning %d\n", -EIO);
-			return -EIO;
+		
+		cli();
+		rc = verify_area(VERIFY_WRITE, buf, nbytes);
+		if (rc != 0) {
+			sti();
+			return rc;
 		}
-		if (nbytes >= MRP_MAX_PKT_SIZE) {
-		dprintk("mrp_read returning %d\n", -EINVAL);
-			return -EINVAL;
+		
+		while (bytes_copied < nbytes) {
+			if (recv_ring->count == 0) {
+				if (file->f_flags & O_NONBLOCK) {
+					sti();
+					return -EWOULDBLOCK;
+				}
+				interruptible_sleep_on(&mrp->wake_queue1);
+				if (current->signal & ~current->blocked) {
+					sti();
+					return -EINTR;
+				}
+				if (recv_ring->count == 0) {
+					continue;
+				}
+			}
+
+			put_user(ringbuf_get(recv_ring), buf);
+			bytes_copied++;
+			buf++;
 		}
-	} else if ((mrp->flags & MRPF_CPOPEN) == 0) {
-		/* not a regular inode minor, and not CPOPEN'd. */
-		dprintk("mrp_read returning %d\n", -ENODEV);
+		mrp->regs->ier |= MRP_STATF_CPR;
+		sti();
+		return bytes_copied;
+	}
+	/* opened in normal mode */
+	bytes_copied = mrp->rlen;
+	
+	if ((mrp->flags & MRPF_OPENED) == 0) {
 		return -ENODEV;
 	}
-
-
-	cli();
+	if ((mrp->flags & MRPF_RESET) == 0) {
+		return -EIO;
+	}
+	if (nbytes < MRP_MAX_PKT_SIZE) {
+		/* read buffer must be big enough for any packet */
+		return -EINVAL;
+	}
 
 	rc = verify_area(VERIFY_WRITE, buf, nbytes);
 	if (rc != 0) {
-		dprintk("mrp_read returning %d\n", rc);
 		return rc;
 	}
-	
-	/* 0x8000bc5 */
-	for (counter = 0; counter < nbytes; counter++) {
-		/* top of loop at loc_8000c63 */
-		/* loc_8000bd8 */
-		while (mrp->recvring.count == 0) {
-			/* 8000be5 */
-			if (file->f_flags & O_NONBLOCK) {
-				dprintk("mrp_read returning %d\n", -EWOULDBLOCK);
-				return -EWOULDBLOCK;
-			}
-			interruptible_sleep_on(&mrp->wake_queue1);
-			if (current->signal & ~current->blocked) {
-				dprintk("mrp_read returning %d\n", -EINTR);
-				return -EINTR;
-			}
+
+	cli();
+	if (mrp->flags & MRPF_REQTAG) {
+		struct deci_acknak_pkt_s acknak;
+		memset(&acknak, 0, sizeof(acknak));
+		acknak.hdr.magic = DECI_MAGIC;
+		acknak.hdr.size = 0x22;
+		acknak.hdr.req = REQ_ZACKNAK;
+		acknak.ack = mrp->deci_tag_for_reset;
+		acknak.hdr.cksum = deci_cksum((unsigned int *) &acknak.hdr);
+		mrp_send(mrp);
+		while((mrp->flags & MRPF_RDONE) == 0) {
+			/* busy loop, no yielding! */
 		}
-		*buf++ = ringbuf_get(&mrp->recvring);
 	}
-	/* 8000c71 */
-	mrp->regs->ier |= MRP_STATF_CPR;
-	dprintk("mrp_read returning %d\n", counter);
-	return counter;
+	
+	rc = copy_to_user(buf, mrp->recvbuf, bytes_copied);
+	if (rc != 0) {
+		sti();
+		return rc;
+	}
+
+	mrp->deci_in = mrp->recvbuf;
+	mrp->rlen = 0;
+	mrp->flags &= ~MRPF_RDONE;
+	mrp->regs->ier |= MRP_STATF_RECV;
+	sti();
+	return bytes_copied;
 }
 
 static int mrp_write(struct inode *inode, struct file *file, const char *buf, int len)
