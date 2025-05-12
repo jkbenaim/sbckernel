@@ -125,6 +125,7 @@ static int mrp_send(struct mrp_unit *mrp)
 	return rc;
 }
 
+#if 0
 static int mrp_recv(struct mrp_unit *mrp)
 {
 	__label__ out_error;
@@ -193,6 +194,76 @@ out_error:
 	dprintk("mrp_recv returning -1\n");
 	return -1;
 }
+#else
+static int mrp_recv(struct mrp_unit *mrp)
+{
+	__label__ rescan_header;
+
+	struct decihdr_s *hdr = (struct decihdr_s *)mrp->recvbuf;
+
+	mrp_printk(2, "mrp_recv:\n");
+
+	if (mrp->flags & MRPF_RDONE) {
+		return 0;
+	}
+
+	mrp->deci_in = mrp->recvbuf;
+
+	if (mrp->regs->fst & MRP_FSTF_0001) {
+		mrp_printk(1, "mrp_recv: invalid fifo status (%04x)\n", mrp->regs->fst);
+		mrp->regs->rxc = 1;
+		mrp->regs->ier |= MRP_STATF_RECV;
+		return -1;
+	}
+
+rescan_header:
+	mrp_get_fifo(mrp, (unsigned int *)mrp->recvbuf, 4);
+
+	if (mrp->regs->fst & MRP_FSTF_0010) {
+		mrp_printk(1, "mrp_recv: invalid fifo status (%04x)\n", mrp->regs->fst);
+		mrp->regs->rxc = 1;
+		mrp->regs->ier |= MRP_STATF_RECV;
+		return -1;
+	}
+
+	mrp->rlen = hdr->size;
+	mrp->deci_in += 4;
+
+	if (hdr->magic != DECI_MAGIC || hdr->size > MRP_MAX_PKT_SIZE) {
+		if ((mrp->regs->fst & MRP_FSTF_0001) == 0) {
+			mrp_printk(1, "mrp_recv: rescanning (%04x/%04x)\n", hdr->magic, hdr->size);
+			goto rescan_header;
+		} else {
+			mrp_printk(1, "mrp_recv: bad mag/len (%04x/%04x)\n", hdr->magic, hdr->size);
+			mrp->regs->rxc = 1;
+			mrp->regs->ier |= MRP_STATF_RECV;
+			return -1;
+		}
+	}
+
+#if 0
+	if (mrp->rlen > 4) {
+		mrp_get_fifo(mrp, (unsigned int *)(mrp->recvbuf + 4), mrp->rlen - 4);
+	}
+#else
+	mrp_get_fifo(mrp, mrp->deci_in, mrp->rlen - 4);
+#endif
+
+	mrp->regs->rxc = 1;
+
+	if (hdr->cksum != deci_cksum((unsigned int *)hdr)) {
+		mrp_printk(1, "mrp_recv: bad sum\n");
+		mrp->regs->ier |= MRP_STATF_RECV;
+		return 1;
+	}
+
+	mrp_printk(2, "mrp_recv: len=%d\n", mrp->rlen);
+	mrp->flags |= MRPF_RDONE;
+	wake_up(&mrp->wake_queue4);
+
+	return 1;
+}
+#endif
 
 static int mrp_reset(struct mrp_unit *mrp)
 {
@@ -450,7 +521,7 @@ static int mrp_read(struct inode *inode, struct file *file, char *buf, int nbyte
 		dprintk("mrp_read returning %d\n", -EINVAL);
 			return -EINVAL;
 		}
-	} else if (mrp->flags & MRPF_CPOPEN) {
+	} else if ((mrp->flags & MRPF_CPOPEN) == 0) {
 		/* not a regular inode minor, and not CPOPEN'd. */
 		dprintk("mrp_read returning %d\n", -ENODEV);
 		return -ENODEV;
