@@ -13,6 +13,7 @@
 #include <linux/pci.h>
 #include <linux/proc_fs.h>
 #include <linux/ps2mrp-psnet.h>
+#include <linux/wrapper.h>
 
 /*
  * .data
@@ -171,14 +172,7 @@ rescan_header:
 		}
 	}
 
-#if 0
-	if (mrp->rlen > 4) {
-		mrp_get_fifo(mrp, (unsigned int *)(mrp->recvbuf + 4), mrp->rlen - 4);
-	}
-#else
 	mrp_get_fifo(mrp, mrp->deci_in, mrp->rlen - 4);
-#endif
-
 	mrp->regs->rxc = 1;
 
 	if (hdr->cksum != deci_cksum((unsigned int *)hdr)) {
@@ -256,7 +250,6 @@ static int mrp_bootp(struct mrp_unit *mrp)
 	if (cpr & MRP_CPRF_0100) {
 		if (cpr & MRP_CPRF_0200) {
 			wake_up(&mrp->wake_queue3);
-			//cpr = 0x0f00;
 		} else {
 			if (mrp->buf40) {
 				mrp_put_fifo(mrp, mrp->buf40, mrp->nbytes40);
@@ -531,7 +524,7 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 	int minor, rc;
 	unsigned index;
 	struct mrp_unit *mrp;
-	struct decihdr_s hdr;
+	struct deci_reset_pkt_s pkt;
 
 	minor = MINOR(inode->i_rdev);
 	index = minor & 3;
@@ -545,7 +538,7 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 
 	mrp_printk(2, "mrp_write: count=%d\n", len);
 
-	if (index > 3) {
+	if (index >= MRP_UNIT_MAX) {
 		dprintk("mrp_write: index out of range, returning -ENODEV\n");
 		return -ENODEV;
 	}
@@ -557,8 +550,10 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 	}
 
 	if (minor & 0x40) {
-		int bytes_done;
 		/* special control plane case */
+		int bytes_processed, data_len;
+		struct ringbuf_s *recv_ring = &mrp->recvring;
+		data_len = len;
 		if ((mrp->flags & MRPF_CPOPEN) == 0) {
 			dprintk("mrp_write: cpopen flag not set, returning -ENODEV\n");
 			return -ENODEV;
@@ -569,38 +564,28 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 			return rc;
 		}
 		cli();
-		if (rc < len) {
-			mrp_cps(mrp);
-			sti();
-			dprintk("mrp_write: rc (%d) < len (%d), returning 0\n", rc, len);
-			return 0;
-		}
-		/* loc_8000f4c */
-		for (bytes_done = 0; bytes_done < len; bytes_done++) {
-			while (mrp->sendring.count > 0xfff) {
-				/* loc_8000f5c */
+		bytes_processed = 0;
+		recv_ring = &mrp->recvring;
+		while (bytes_processed < data_len) {
+			if (recv_ring->count >= (RINGBUF_SIZE - 1)) {
 				if (file->f_flags & O_NONBLOCK) {
 					sti();
-					dprintk("mrp_write: O_NONBLOCK was set, returning -EWOULDBLOCK\n");
 					return -EWOULDBLOCK;
 				}
-				/* 8000f6a */
 				interruptible_sleep_on(&mrp->wake_queue2);
-				if (current->signal & ~current->blocked) {
+				if (current_got_fatal_signal()) {
 					sti();
-					dprintk("mrp_write: unblocked signal, returning -EINTR\n");
 					return -EINTR;
 				}
+				if (recv_ring->count >= (RINGBUF_SIZE - 1)) {
+					continue;
+				}
 			}
-			/* loc_8000f9f */
-			ringbuf_put(mrp->recvbuf, *buf++);
+			ringbuf_put(recv_ring, get_user(&buf[bytes_processed++]));
 		}
-
-		/* loc_8000fd6 */
-		mrp_cps(mrp);
 		sti();
-		dprintk("mrp_write: returning len (%d)\n", len);
-		return len;
+		mrp_cps(mrp);
+		return bytes_processed;
 	}
 
 	/* normal case */
@@ -608,8 +593,8 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 		dprintk("mrp_write: not opened, so returning -ENODEV\n");
 		return -ENODEV;
 	}
-	if (len < sizeof(hdr)) {
-		dprintk("mrp_write: len (%d) < sizeof(hdr) (%u), so returning -EINVAL\n", len, sizeof(hdr));
+	if (len < sizeof(pkt.hdr)) {
+		dprintk("mrp_write: len (%d) < sizeof(pkt.hdr) (%u), so returning -EINVAL\n", len, sizeof(pkt.hdr));
 		return -EINVAL;
 	}
 	if (len > MRP_MAX_PKT_SIZE) {
@@ -617,39 +602,37 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 		return -EINVAL;
 	}
 	/* 8001037 */
-	if ((rc = verify_area(VERIFY_READ, buf, sizeof(hdr))) != 0) {
+	if ((rc = verify_area(VERIFY_READ, buf, len)) != 0) {
 		dprintk("mrp_write: VERIFY_READ failed, so returning rc (%d)\n", rc);
 		return rc;
 	}
-	memcpy_fromfs(&hdr, buf, sizeof(hdr));
-	if (hdr.magic != DECI_MAGIC) {
-		dprintk("mrp_write: hdr.magic (%04xh) != DECI_MAGIC (%04xh) so returning -EINVAL\n",
-			hdr.magic, DECI_MAGIC);
+	memcpy_fromfs(&pkt.hdr, buf, sizeof(pkt.hdr));
+	if (pkt.hdr.magic != DECI_MAGIC) {
+		dprintk("mrp_write: pkt.hdr.magic (%04xh) != DECI_MAGIC (%04xh) so returning -EINVAL\n",
+			pkt.hdr.magic, DECI_MAGIC);
 		return -EINVAL;
 	}
-	if (len != hdr.size) {
-		dprintk("mrp_write: len (%d) != hdr.size (%d), so returning -EINVAL\n", len, hdr.size);
+	if (len != pkt.hdr.size) {
+		dprintk("mrp_write: len (%d) != hdr.size (%d), so returning -EINVAL\n", len, pkt.hdr.size);
 		return -EINVAL;
 	}
-	if (hdr.cksum != deci_cksum((unsigned int *) &hdr)) {
+	if (pkt.hdr.cksum != deci_cksum((unsigned int *) &pkt.hdr)) {
 		dprintk("mrp_write: checksum invalid, so returning -EINVAL\n");
 		return -EINVAL;
 	}
 
-	if (hdr.req == REQ_TRESET) {
-		//struct deci_reset_pkt_s pkt;
-		//struct decihdr_s hdr2 = (struct decihdr_s *) buf;
-		int reset_mode;
+	if (pkt.hdr.req == REQ_TRESET) {
 		if (!(len > 0x23u)) {
-			reset_mode = 0;
+			pkt.reset_mode = 0;
 		} else {
+			int tmp;
 			int *frompkt = (int *)(buf + 0x20);
-			memcpy_fromfs(&reset_mode, frompkt, 4);
-			reset_mode >>= 4;
-			reset_mode &= 0xf;
+			tmp = get_user(frompkt);
+			tmp = (tmp >> 4) & 0x0f;
+			pkt.reset_mode = tmp;
 		}
 		cli();
-		switch (reset_mode) {
+		switch (pkt.reset_mode) {
 		case 1:
 			if (mrp->buf38) {
 				kfree(mrp->buf38);
@@ -680,11 +663,11 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 		default:
 			break;
 		}
-		if (reset_mode == 0) {
+		if (pkt.reset_mode == 0) {
 			mrp_reset(mrp);
 		}
-		mrp->deci_tag_for_reset = hdr.tag;
-		if (hdr.tag) {
+		mrp->deci_tag_for_reset = pkt.hdr.tag;
+		if (pkt.hdr.tag) {
 			mrp->flags |= MRPF_REQTAG;
 			wake_up(&mrp->wake_queue4);
 		}
@@ -706,13 +689,13 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 			return -EWOULDBLOCK;
 		}
 		interruptible_sleep_on(&mrp->wake_queue3);
-		if (current->signal & ~current->blocked) {
+		if (current_got_fatal_signal()) {
 			sti();
 			dprintk("mrp_write: returning -EINTR\n");
 			return -EINTR;
 		}
 	}
-	//copy_from_user(mrp->sendbuf, buf, len);
+	memcpy_fromfs(mrp->sendbuf, buf, len);
 	mrp->deci_out = mrp->sendbuf;
 	mrp->slen = len;
 	mrp_send(mrp);
