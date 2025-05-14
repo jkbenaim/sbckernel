@@ -62,7 +62,7 @@ struct mrp_unit mrp_units[4];
 
 #ifndef LINUX_VERSION_CODE
 #include <linux/version.h>
-#endif
+#endif /* LINUX_VERSION_CODE */
 #if (LINUX_VERSION_CODE < 0x020100)
 #include <linux/mm.h>
 
@@ -87,7 +87,7 @@ static inline unsigned long copy_to_user(void *to, const void *from, unsigned lo
 	dprintk("copy_to_user returning 0");
         return 0;
 }
-#endif
+#endif /* LINUX_VERSION_CODE < 0x020100 */
 
 static void mrp_dump_regs(struct mrpregs *regs)
 {
@@ -324,7 +324,7 @@ static void mrp_stat_decode(struct mrp_unit *mrp, char *buf, int nbytes)
 	}
 	buf[8] = '\0';
 }
-#endif
+#endif /* MRP_NOMATCHING */
 
 static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *pt_regs)
 {
@@ -362,7 +362,7 @@ static void mrp_interrupt(int irq, void *dev_id, struct pt_regs *pt_regs)
 		mrp_printk(2, "mrp_interrupt: stat=0x%04x (%s)\n", stat, buf);
 #else
 		mrp_printk(2, "mrp_interrupt: stat=0x%04x\n", stat);
-#endif
+#endif /* MRP_NOMATCHING */
 		mrp_dump_regs(regs);
 	}
 
@@ -634,6 +634,9 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 		cli();
 		switch (pkt.reset_mode) {
 		case 1:
+#ifdef MRP_NOMATCHING
+			mrp->reset_mode = 1;
+#endif /* MRP_NOMATCHING */
 			if (mrp->buf38) {
 				kfree(mrp->buf38);
 			}
@@ -647,6 +650,9 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 			memcpy_fromfs(mrp->buf38, buf, len);
 			break;
 		case 0:
+#ifdef MRP_NOMATCHING
+			mrp->reset_mode = 0;
+#endif /* MRP_NOMATCHING */
 			if (mrp->buf40) {
 				kfree(mrp->buf40);
 			}
@@ -660,7 +666,13 @@ static int mrp_write(struct inode *inode, struct file *file, const char *buf, in
 			memcpy_fromfs(mrp->buf40, buf, len);
 			break;
 		case 2:
+#ifdef MRP_NOMATCHING
+			mrp->reset_mode = 2;
+#endif /* MRP_NOMATCHING */
 		default:
+#ifdef MRP_NOMATCHING
+			mrp->reset_mode = -1;
+#endif /* MRP_NOMATCHING */
 			break;
 		}
 		if (pkt.reset_mode == 0) {
@@ -770,7 +782,7 @@ static int mrp_open(struct inode *inode, struct file *file)
 	mrp_printk(2, "mrp_open: index=%d, minor=%d\n", index, minor);
 #else
 	mrp_printk(2, "mrp_open: index=%d\n", index);
-#endif
+#endif /* MRP_NOMATCHING */
 
 	if (index > 3) {
 		return -ENODEV;
@@ -910,6 +922,50 @@ static int mrp_get_info(char *buffer, char **start, off_t offset, int length, in
 	int index, len = 0;
 #define cat(fmt, arg...) len += sprintf(buffer+len, fmt, ##arg);
 
+#ifdef MRP_NOMATCHING
+	void hexdump(const void *buf, size_t siz)
+	{
+		const unsigned char *mybuf = buf;
+		size_t off = 0;
+		while (siz) {
+			unsigned numbytes;
+			size_t i;
+			numbytes = (siz>16)?16:siz;
+
+			cat("%08x: ", off);
+
+			for (i = 0; i < numbytes; i++) {
+				cat("%02x", mybuf[i]);
+				if (i & 1) {
+					cat(" ");
+				}
+			}
+			for (i = numbytes; i < 16; i++) {
+				if (i & 1) {
+					cat("   ");
+				} else {
+					cat("  ");
+				}
+			}
+			cat(" ");
+			for (i = 0; i < numbytes; i++) {
+				unsigned char mybyte = mybuf[i];
+				if ((mybyte >= 32) && (mybyte <= 126)) {
+					/* printable */
+					cat("%c", mybyte);
+				} else {
+					/* non-printable */
+					cat(".");
+				}
+			}
+			cat("\n");
+			siz -= numbytes;
+			mybuf += numbytes;
+			off += 16;
+		}
+	}
+#endif /* MRP_NOMATCHING */
+
 	cat("DECI1 $Revision: 3.10 $ %s %s\n", MRP_PSNET_BUILDDATE, MRP_PSNET_BUILDTIME);
 	for (index = 0; index < MRP_UNIT_MAX; index++) {
 		struct mrp_unit *mrp;
@@ -969,8 +1025,20 @@ static int mrp_get_info(char *buffer, char **start, off_t offset, int length, in
 			cat(" AEO=%04x", regs->aeo);
 			cat(" AFO=%04x\n", regs->afo);
 #ifdef MRP_NOMATCHING
-			cat(" base4 = 0x%08x,", mrp->base4->data[0]);
-			cat(" nbytes38=%xh, nbytes40=%xh\n", mrp->nbytes38, mrp->nbytes40); 
+			cat(" base4 = 0x%08x, reset_mode = %d\n",
+				mrp->base4->data[0],
+				mrp->reset_mode);
+			cat(" nbytes38=%xh, nbytes40=%xh\n",
+				mrp->nbytes38,
+				mrp->nbytes40); 
+			if (mrp->nbytes38) {
+				cat(" buf38:\n");
+				hexdump(mrp->buf38, mrp->nbytes38);
+			}
+			if (mrp->nbytes40) {
+				cat(" buf40:\n");
+				hexdump(mrp->buf40, mrp->nbytes40);
+			}
 #endif /* MRP_NOMATCHING */
 		}
 		sti();
@@ -1099,8 +1167,11 @@ int mrp_init(void)
 #else
 		printk("mrp: unit %d at 0x%x,0x%x,0x%x (irc = %d)\n",
 			index, base0, base2, base3, pci_irq_line);
-#endif
+#endif /* MRP_NOMATCHING */
 		mrp_units[index].flags |= MRPF_DETECT;
+#ifdef MRP_NOMATCHING
+		mrp_units[index].reset_mode = -2;
+#endif /* MRP_NOMATCHING */
 		boards_found++;
 	}
 	if (boards_found == 0) {
@@ -1205,4 +1276,4 @@ void cleanup_module(void)
 	proc_unregister(&proc_root, mrp_proc_de.low_ino);
 #endif /* PROC_FS */
 }
-#endif
+#endif /* MODULE */

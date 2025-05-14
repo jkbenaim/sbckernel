@@ -3,7 +3,7 @@
 #include <linux/fs.h>
 #include <linux/proc_fs.h>
 
-//#define MRP_NOMATCHING
+#define MRP_NOMATCHING
 
 #define MRP_PSNET_BUILDDATE "Mar 10 1999"
 #define MRP_PSNET_BUILDTIME "21:15:11"
@@ -140,6 +140,7 @@ struct mrp_unit {
 	struct wait_queue *wake_queue2;
 #ifdef MRP_NOMATCHING
 	struct base4 *base4;
+	int reset_mode;
 #endif /* MRP_NOMATCHING */
 };
 
