@@ -1,5 +1,5 @@
 
-Linux kernel for PS2 TOOL SBC
+	Linux kernel for PS2 TOOL SBC
 
 This is a fork of the Linux kernel, version 2.0.36. This fork is meant
 to run on the single-board computer (SBC) inside the PlayStation 2 TOOL.
